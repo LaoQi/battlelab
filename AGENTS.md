@@ -47,4 +47,4 @@ go test ./... && go test -race ./...    # 全量测试 + 竞态
 make cross                              # darwin/windows 的 vet + 测试编译
 ```
 
-调用方：`tanya`（终端前台）、`ivan`（常驻后台），均以 `replace ../battlelab` 本地联调。
+调用方：`tanya`（终端前台）、`ivan`（常驻后台），依赖已发布版本；本地联调时临时写 `replace ../battlelab`。
