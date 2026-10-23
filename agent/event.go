@@ -13,6 +13,7 @@ const (
 	EventToolEnd
 	EventResponse
 	EventReasoningEnd
+	EventRetry
 	EventTurnEnd
 )
 
@@ -27,6 +28,15 @@ type Event struct {
 	Interactive bool
 	Response    ResponseInfo
 	Turn        TurnInfo
+	Retry       RetryInfo
+}
+
+// RetryInfo 是一次请求失败后的重试计划：Err 是完整的上游错误原文（不裁剪）。
+type RetryInfo struct {
+	Attempt int
+	Max     int
+	Delay   time.Duration
+	Err     string
 }
 
 // TurnInfo 是一次对话回合的结算；Duration 的起点只有 Ask 知道，属事实。

@@ -173,10 +173,55 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, sink EventS
 	if c.cfg.APIKey == "" {
 		return nil, fmt.Errorf(MsgAPIKey)
 	}
+	max := c.cfg.MaxRetries
+	if max < 0 {
+		max = 0
+	}
+	track := &retrySink{sink: sink}
+	for attempt := 1; ; attempt++ {
+		msg, err := c.request(ctx, messages, track.Emit)
+		if err == nil {
+			return msg, nil
+		}
+		retryAfter, ok := retryableErr(err)
+		if !ok || attempt > max || track.produced {
+			return nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		delay := retryDelay(attempt, retryAfter)
+		sink.Emit(Event{Kind: EventRetry, Retry: RetryInfo{
+			Attempt: attempt,
+			Max:     max,
+			Delay:   delay,
+			Err:     err.Error(),
+		}})
+		if err := sleepCtx(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (c *Client) request(ctx context.Context, messages []Message, sink EventSink) (*Message, error) {
 	if c.cfg.ApiProtocol == "chat" {
 		return c.chatStream(ctx, messages, sink)
 	}
 	return c.responsesStream(ctx, messages, sink)
+}
+
+// retrySink 记录本次请求是否已向上屏输出过内容：一旦有输出就无法回滚，后续失败不再重试。
+type retrySink struct {
+	sink     EventSink
+	produced bool
+}
+
+func (s *retrySink) Emit(e Event) {
+	switch e.Kind {
+	case EventContent, EventReasoning, EventToolCall:
+		s.produced = true
+	}
+	s.sink.Emit(e)
 }
 
 func temperatureParam(cfg *Config) *float64 {

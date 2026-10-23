@@ -14,6 +14,7 @@ type Config struct {
 	ReasoningEffort  string  `yaml:"reasoning_effort"`
 	ImageDetail      string  `yaml:"image_detail"`
 	ApiProtocol      string  `yaml:"api_protocol"`
+	MaxRetries       int     `yaml:"max_retries"`
 	UserAgent        string  `yaml:"user_agent"`
 	DataDir          string  `yaml:"data_dir"`
 	SessionMode      string  `yaml:"session_mode"`

@@ -261,20 +261,20 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 				usage = usageFromResponses(cc.Response.Usage)
 			}
 			if ev.Type == "response.completed" && cc.Response.Error != nil {
-				return fmt.Errorf(MsgRespFailed, cc.Response.Error.Message)
+				return &semanticError{fmt.Errorf(MsgRespFailed, cc.Response.Error.Message)}
 			}
 		case "response.failed":
 			var cc responsesCompleted
 			if json.Unmarshal([]byte(data), &cc) == nil && cc.Response.Error != nil {
-				return fmt.Errorf(MsgRespFailed, cc.Response.Error.Message)
+				return &semanticError{fmt.Errorf(MsgRespFailed, cc.Response.Error.Message)}
 			}
-			return fmt.Errorf(MsgRespFailed, "response.failed")
+			return &semanticError{fmt.Errorf(MsgRespFailed, "response.failed")}
 		case "error":
 			var ee struct {
 				Error *responsesError `json:"error"`
 			}
 			if json.Unmarshal([]byte(data), &ee) == nil && ee.Error != nil {
-				return fmt.Errorf(MsgRespFailed, ee.Error.Message)
+				return &semanticError{fmt.Errorf(MsgRespFailed, ee.Error.Message)}
 			}
 		}
 		return nil
