@@ -23,6 +23,7 @@ agent/   回合核心：Config 校验 / LLM 双协议（chat、responses）/ 回
          会话存储与归档 / 交接（next_session、Continue）/ 统计 / 工具注册与 agent_custom / 图像（缩放、裁剪、EXIF）
 tools/   tools.Standard 装配标准集与顺序；shell/ = run_shell（借出终端经注入的 Console 窄接口）；image/ = read_image；
          builtin/ = get_time/get_env/calc
+vbash/   虚拟 bash 解释器（实验特性）：词法/解析/内建执行，外部程序透传；不依赖 tools/
 ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、探测器、信号面（SIGTERM/SIGHUP/SIGINT/SIGWINCH/SIGQUIT）
 ```
 
@@ -39,6 +40,7 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 - `vbash.md` — 虚拟 bash 方向的语料分析（分层/引号/heredoc/外部程序边界）
 - `vbash-bench.md` — 虚拟 bash 回归基准（`testdata/vbash-bench/`，离线手动运行）
 - `vbash-plan.md` — 虚拟 bash 的特性范围与实施规划（边界、特性矩阵、跨平台归一、分步门槛）
+- `vbash-impl.md` — 虚拟 bash 的实施记录（按阶段记偏差与自定决策）
 
 这些文档 2026-10-22 随 `agent`/`tools`/`ctty` 从 tanya 迁入；文中 `tanya 的 …` 前缀指 tanya 仓库的同名文档。
 

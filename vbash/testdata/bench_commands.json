@@ -1,0 +1,770 @@
+[
+ {
+  "name": "C/001-cd-cat-file",
+  "command": "cd d/tower && cat docs/plan.md"
+ },
+ {
+  "name": "C/002-cat-file",
+  "command": "cat d/tower/docs/plan.md"
+ },
+ {
+  "name": "C/003-sed-range-120",
+  "command": "sed -n 1,3p d/tower/docs/plan.md"
+ },
+ {
+  "name": "C/004-sed-range-quoted",
+  "command": "cd d/tower && sed -n '1,3p' docs/plan.md"
+ },
+ {
+  "name": "C/005-sed-range-tail-of-file",
+  "command": "sed -n '/^func main/,$p' d/x/main.go"
+ },
+ {
+  "name": "C/006-cat-n-file",
+  "command": "cat -n d/x/main.go"
+ },
+ {
+  "name": "C/007-cd-cat-n",
+  "command": "cd d/x && cat -n main.go"
+ },
+ {
+  "name": "C/008-cat-multi-files",
+  "command": "cat d/x/a.go d/x/b.go"
+ },
+ {
+  "name": "C/009-echo-sep-cat-cat",
+  "command": "cat d/x/a.go; echo \"=== b.go ===\"; cat d/x/b.go"
+ },
+ {
+  "name": "C/010-head-n-file",
+  "command": "head -3 d/x/big.txt"
+ },
+ {
+  "name": "C/011-grep-n-then-head",
+  "command": "grep -n \"func \" d/x/a.go | head -3"
+ },
+ {
+  "name": "C/012-grep-r-count",
+  "command": "grep -rc \"TODO\" d/x | head -5"
+ },
+ {
+  "name": "C/013-pwd-ls",
+  "command": "cd d/x && pwd | sed 's#.*/d/#d/#' && ls -la | wc -l"
+ },
+ {
+  "name": "C/014-cd-find-sort",
+  "command": "cd d/x && find . -type f | sort"
+ },
+ {
+  "name": "C/015-wc-l-multi",
+  "command": "cd d/x && wc -l *.txt"
+ },
+ {
+  "name": "C/016-diff-two-files",
+  "command": "diff d/x/a.txt d/x/b.txt; echo \"rc=$?\""
+ },
+ {
+  "name": "C/017-printf-header-for-loop",
+  "command": "for t in a b c; do echo -n \"$t: \"; wc -l < d/x/$t.txt; done"
+ },
+ {
+  "name": "C/018-grep-e-multipattern",
+  "command": "grep -E \"TODO|FIXME\" d/x/a.txt | wc -l"
+ },
+ {
+  "name": "C/019-tail-c-600-python-read",
+  "command": "tail -c 20 d/x/a.txt | wc -c"
+ },
+ {
+  "name": "C/020-cat-heredoc-into-file-then-verify",
+  "command": "cd d/x && cat > notes.md <<'EOF'\n# notes\n- item\nEOF\nwc -l < notes.md"
+ },
+ {
+  "name": "C/021-ls-la-filter",
+  "command": "cd d/x && ls -la | grep -c '^-'"
+ },
+ {
+  "name": "C/022-sed-inplace-batch",
+  "command": "cd d/x && sed -i 's/old/new/g' a.txt && cat a.txt"
+ },
+ {
+  "name": "C/023-cat-with-pipe-tr",
+  "command": "printf 'a-b-c\\n' | tr '-' '\\n' | wc -l"
+ },
+ {
+  "name": "C/024-grep-v-comment",
+  "command": "printf 'a\\n#c\\nb\\n' | grep -v '^#' | wc -l"
+ },
+ {
+  "name": "C/025-sort-uniq-count",
+  "command": "printf 'b\\na\\nb\\n' | sort | uniq -c | sort -rn | head -1"
+ },
+ {
+  "name": "C/026-cut-fields",
+  "command": "printf 'a:b:c\\n' | cut -d: -f2"
+ },
+ {
+  "name": "C/027-awk-print",
+  "command": "printf 'x 1\\ny 2\\n' | awk '{print $2}'"
+ },
+ {
+  "name": "C/028-xargs-with-sh",
+  "command": "printf 'a\\na\\n' | xargs -n1 echo | wc -l"
+ },
+ {
+  "name": "C/029-mkdir-cp-mv",
+  "command": "cd d && mkdir -p new && cp x/a.txt new/ && mv new/a.txt new/b.txt && ls new"
+ },
+ {
+  "name": "C/030-rm-then-verify",
+  "command": "cd d && rm -f x/a.txt && ls x | wc -l"
+ },
+ {
+  "name": "T0/001-cat",
+  "command": "cat a.txt"
+ },
+ {
+  "name": "T0/002-cat-n",
+  "command": "cat -n a.txt"
+ },
+ {
+  "name": "T0/003-head-n",
+  "command": "head -2 a.txt"
+ },
+ {
+  "name": "T0/004-tail-n",
+  "command": "tail -2 a.txt"
+ },
+ {
+  "name": "T0/005-head-missing-file",
+  "command": "head -5 nope.txt"
+ },
+ {
+  "name": "T0/006-cat-missing-file",
+  "command": "cat nope.txt"
+ },
+ {
+  "name": "T0/007-echo-quoted",
+  "command": "echo \"hello world 中文\""
+ },
+ {
+  "name": "T0/008-echo-single-quoted",
+  "command": "echo 'a $HOME b'"
+ },
+ {
+  "name": "T0/009-printf",
+  "command": "printf '%s-%s\\n' foo bar"
+ },
+ {
+  "name": "T0/010-wc-l",
+  "command": "wc -l a.txt"
+ },
+ {
+  "name": "T0/011-true-false-exit",
+  "command": "false; echo $?"
+ },
+ {
+  "name": "T0/012-unknown-command",
+  "command": "definitely_not_a_command_xyz 2>/dev/null; echo \"rc=$?\""
+ },
+ {
+  "name": "T0/013-quoted-semicolon",
+  "command": "echo \"a; b\""
+ },
+ {
+  "name": "T0/014-quoted-pipe",
+  "command": "echo \"a | b\""
+ },
+ {
+  "name": "T0/015-quoted-and",
+  "command": "echo \"a && b\""
+ },
+ {
+  "name": "T0/016-semicolon-separator",
+  "command": "echo one; echo two"
+ },
+ {
+  "name": "T0/017-and-list",
+  "command": "echo one && echo two"
+ },
+ {
+  "name": "T0/018-and-list-fail-shortcircuit",
+  "command": "false && echo never; echo \"after=$?\""
+ },
+ {
+  "name": "T0/019-or-list-fallback",
+  "command": "false || echo fallback"
+ },
+ {
+  "name": "T0/020-semicolon-not-shortcircuit",
+  "command": "false; echo still-here"
+ },
+ {
+  "name": "T1/001-pipe-basic",
+  "command": "echo hello | tr a-z A-Z"
+ },
+ {
+  "name": "T1/002-pipe-multi",
+  "command": "printf 'aa\\nbb\\naa\\ncc\\n' | grep aa | wc -l"
+ },
+ {
+  "name": "T1/003-pipe-exit-code-is-last",
+  "command": "false | true; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/004-pipe-fail-middle",
+  "command": "echo hi | grep -v nomatch | cat; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/005-redirect-out",
+  "command": "echo hi > out.txt; cat out.txt"
+ },
+ {
+  "name": "T1/006-redirect-append",
+  "command": "echo a > f.txt; echo b >> f.txt; cat f.txt"
+ },
+ {
+  "name": "T1/007-redirect-truncate",
+  "command": "echo first > g.txt; echo second > g.txt; cat g.txt"
+ },
+ {
+  "name": "T1/008-redirect-stdin",
+  "command": "cat < in.txt"
+ },
+ {
+  "name": "T1/009-redirect-2-to-1",
+  "command": "ls nope 2>&1 | wc -l"
+ },
+ {
+  "name": "T1/010-redirect-2-null",
+  "command": "ls nope 2>/dev/null; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/011-redirect-dev-null",
+  "command": "echo hidden > /dev/null; echo shown"
+ },
+ {
+  "name": "T1/012-redirect-both-order",
+  "command": "sh -c 'echo out; echo err >&2' > o1.txt 2>&1; grep -c . o1.txt"
+ },
+ {
+  "name": "T1/013-cd-and-then",
+  "command": "cd sub && cat x.txt"
+ },
+ {
+  "name": "T1/014-cd-fail-shortcircuit",
+  "command": "cd no_such_dir && echo never; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/015-cd-persist-across-semicolon",
+  "command": "cd sub; cat x.txt"
+ },
+ {
+  "name": "T1/016-cd-parent",
+  "command": "cd sub && cd .. && cat top.txt"
+ },
+ {
+  "name": "T1/017-subshell-isolated-cd",
+  "command": "( cd sub && pwd > /dev/null ); cat top.txt"
+ },
+ {
+  "name": "T1/018-exit-code-sequence",
+  "command": "true; echo $?; false; echo $?"
+ },
+ {
+  "name": "T1/019-grep-count",
+  "command": "grep -c l a.txt"
+ },
+ {
+  "name": "T1/020-grep-status-quiet",
+  "command": "grep -q zzz a.txt; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/021-sed-range-print",
+  "command": "sed -n '2,3p' a.txt"
+ },
+ {
+  "name": "T1/022-sed-substitute-stdout",
+  "command": "echo abc | sed 's/b/X/'"
+ },
+ {
+  "name": "T1/023-sed-inplace",
+  "command": "echo v1 > f.txt; sed -i 's/v1/v2/' f.txt; cat f.txt"
+ },
+ {
+  "name": "T1/024-head-in-pipeline",
+  "command": "printf '1\\n2\\n3\\n4\\n' | head -2"
+ },
+ {
+  "name": "T1/025-tail-follows-nothing",
+  "command": "printf '1\\n2\\n3\\n' | tail -1"
+ },
+ {
+  "name": "T1/026-echo-various-quotes",
+  "command": "echo \"x 'y' z\"; echo 'x \"y\" z'"
+ },
+ {
+  "name": "T1/027-exit-status-of-missing-cmd",
+  "command": "no_such_cmd_abc 2>/dev/null; echo \"rc=$?\""
+ },
+ {
+  "name": "T1/028-and-chain-three",
+  "command": "true && true && echo ok"
+ },
+ {
+  "name": "T1/029-or-chain",
+  "command": "false || false || echo last"
+ },
+ {
+  "name": "T1/030-mixed-and-or",
+  "command": "false && echo never || echo fallback"
+ },
+ {
+  "name": "T1/031-background-and-wait-removed",
+  "command": "echo bg > bg.txt & wait; cat bg.txt"
+ },
+ {
+  "name": "T1/032-redirect-then-pipe",
+  "command": "echo hi > h.txt; cat h.txt | tr a-z A-Z"
+ },
+ {
+  "name": "T1/033-multiple-redirects-same-cmd",
+  "command": "sh -c 'echo a; echo b >&2' 2>/dev/null 1>cap.txt; grep -c a cap.txt"
+ },
+ {
+  "name": "T1/034-newline-separated",
+  "command": "echo one\necho two"
+ },
+ {
+  "name": "T1/035-trailing-newline-and-empty-lines",
+  "command": "echo a\n\necho b"
+ },
+ {
+  "name": "T1/036-comment-line",
+  "command": "echo before  # 这是注释\necho after"
+ },
+ {
+  "name": "T2/001-var-assign-use",
+  "command": "X=abc; echo \"$X\""
+ },
+ {
+  "name": "T2/002-var-unquoted-word-splitting",
+  "command": "X=\"a  b\"; printf '[%s]' $X; echo"
+ },
+ {
+  "name": "T2/003-var-quoted-no-split",
+  "command": "X=\"a  b\"; printf '[%s]' \"$X\"; echo"
+ },
+ {
+  "name": "T2/004-var-in-single-quotes",
+  "command": "X=abc; echo '$X'"
+ },
+ {
+  "name": "T2/005-var-braces",
+  "command": "X=abc; echo \"${X}def\""
+ },
+ {
+  "name": "T2/006-var-default",
+  "command": "unset Z; echo \"${Z:-dflt}\"; echo \"${Z-fallback}\""
+ },
+ {
+  "name": "T2/007-var-length",
+  "command": "X=abcdef; echo \"${#X}\""
+ },
+ {
+  "name": "T2/008-var-trim-suffix",
+  "command": "F=a/b/c.txt; echo \"${F##*/}\"; echo \"${F%.*}\"; echo \"${F%%.*}\""
+ },
+ {
+  "name": "T2/009-var-replace",
+  "command": "X=a-b-c; echo \"${X/-/_}\"; echo \"${X//-/_}\""
+ },
+ {
+  "name": "T2/010-cmdsub-basic",
+  "command": "echo \"$(echo hi)\""
+ },
+ {
+  "name": "T2/011-cmdsub-nested-quotes",
+  "command": "echo \"x=$(printf 'a b')\""
+ },
+ {
+  "name": "T2/012-cmdsub-in-assignment",
+  "command": "N=$(printf 'a\\nb\\nc\\n' | wc -l); echo \"n=$N\""
+ },
+ {
+  "name": "T2/013-cmdsub-strips-trailing-newlines",
+  "command": "X=$(printf 'v\\n\\n\\n'); printf '[%s]' \"$X\"; echo"
+ },
+ {
+  "name": "T2/014-cmdsub-exit-code",
+  "command": "X=$(false); echo \"rc=$?\""
+ },
+ {
+  "name": "T2/015-cmdsub-in-arg",
+  "command": "echo prefix-$(echo mid)-suffix"
+ },
+ {
+  "name": "T2/016-arithmetic",
+  "command": "echo $((1+2*3))"
+ },
+ {
+  "name": "T2/017-arithmetic-var",
+  "command": "N=4; echo $((N*N))"
+ },
+ {
+  "name": "T2/018-tilde-expand",
+  "command": "echo ~ | grep -c ."
+ },
+ {
+  "name": "T2/019-tilde-in-path",
+  "command": "mkdir -p ~/d && echo x > ~/d/f && cat ~/d/f"
+ },
+ {
+  "name": "T2/020-special-question",
+  "command": "true; echo $?"
+ },
+ {
+  "name": "T2/021-special-hash",
+  "command": "set -- a b c; echo $#"
+ },
+ {
+  "name": "T2/022-special-at",
+  "command": "set -- a b; printf '[%s]' \"$@\"; echo"
+ },
+ {
+  "name": "T2/023-special-star",
+  "command": "set -- a b; printf '[%s]' \"$*\"; echo"
+ },
+ {
+  "name": "T2/024-export-visible-to-child",
+  "command": "export FOO=bar; sh -c 'echo \"$FOO\"'"
+ },
+ {
+  "name": "T2/025-not-exported-invisible",
+  "command": "FOO2=bar2; sh -c 'echo \"[${FOO2}]\"'"
+ },
+ {
+  "name": "T2/026-dollar-single-quote",
+  "command": "printf '%s' $'a\\tb'; echo"
+ },
+ {
+  "name": "T2/027-backslash-escape",
+  "command": "echo \"a\\\"b\""
+ },
+ {
+  "name": "T2/028-cmdsub-with-pipe",
+  "command": "echo \"$(printf 'x\\ny\\n' | head -1)\""
+ },
+ {
+  "name": "T2/029-var-adjacent-text",
+  "command": "X=1; Xdef=2; echo \"$Xdef\"; echo \"${X}def\""
+ },
+ {
+  "name": "T2/030-glob-expand",
+  "command": "echo *.txt"
+ },
+ {
+  "name": "T2/031-glob-no-match-literal",
+  "command": "echo *.nomatch"
+ },
+ {
+  "name": "T2/032-env-var-from-proc",
+  "command": "FOO=xyz sh -c 'echo $FOO'"
+ },
+ {
+  "name": "T3c/101-for-list",
+  "command": "for f in a b c; do echo \"== $f\"; done"
+ },
+ {
+  "name": "T3c/102-for-glob",
+  "command": "for f in *.txt; do echo \"$f\"; done"
+ },
+ {
+  "name": "T3c/103-for-multiline-body",
+  "command": "for f in a b; do\n  echo \"start $f\"\n  echo \"end $f\"\ndone"
+ },
+ {
+  "name": "T3c/104-for-cmdsub-list",
+  "command": "for n in $(printf 'p\\nq\\n'); do echo \"-$n\"; done"
+ },
+ {
+  "name": "T3c/105-for-with-break",
+  "command": "for i in 1 2 3; do [ \"$i\" = 2 ] && break; echo $i; done"
+ },
+ {
+  "name": "T3c/106-for-with-continue",
+  "command": "for i in 1 2 3; do [ \"$i\" = 2 ] && continue; echo $i; done"
+ },
+ {
+  "name": "T3c/107-while-counter",
+  "command": "i=0; while [ $i -lt 3 ]; do echo \"i=$i\"; i=$((i+1)); done"
+ },
+ {
+  "name": "T3c/108-while-read-lines",
+  "command": "while read -r line; do echo \"L:$line\"; done < f.txt"
+ },
+ {
+  "name": "T3c/109-if-then-else",
+  "command": "if [ -f f.txt ]; then echo yes; else echo no; fi"
+ },
+ {
+  "name": "T3c/110-if-elif",
+  "command": "x=2; if [ \"$x\" = 1 ]; then echo one; elif [ \"$x\" = 2 ]; then echo two; else echo other; fi"
+ },
+ {
+  "name": "T3c/111-if-test-operators",
+  "command": "[ -d sub ] && echo dir; [ -e sub/a ] && echo exists"
+ },
+ {
+  "name": "T3c/112-if-string-compare",
+  "command": "[ \"abc\" = \"abc\" ] && echo eq; [ \"abc\" != \"x\" ] && echo ne"
+ },
+ {
+  "name": "T3c/113-case-basic",
+  "command": "v=b; case \"$v\" in a) echo A;; b) echo B;; *) echo other;; esac"
+ },
+ {
+  "name": "T3c/114-case-glob-pattern",
+  "command": "f=img.png; case \"$f\" in *.png|*.jpg) echo image;; *) echo other;; esac"
+ },
+ {
+  "name": "T3c/115-function-define-call",
+  "command": "greet() { echo \"hi $1\"; }; greet world"
+ },
+ {
+  "name": "T3c/116-function-local-var",
+  "command": "f() { local v=inner; echo \"$v\"; }; v=outer; f; echo \"$v\""
+ },
+ {
+  "name": "T3c/117-function-return-status",
+  "command": "f() { return 3; }; f; echo \"rc=$?\""
+ },
+ {
+  "name": "T3c/118-subshell-vs-brace-group",
+  "command": "( echo sub ) ; { echo grp; }"
+ },
+ {
+  "name": "T3c/119-brace-group-shared-vars",
+  "command": "x=1; { x=2; }; echo $x; ( x=3 ); echo $x"
+ },
+ {
+  "name": "T3c/120-nested-if-in-for",
+  "command": "for f in a b; do if [ \"$f\" = a ]; then echo first; else echo rest; fi; done"
+ },
+ {
+  "name": "T3c/121-if-with-pipeline-condition",
+  "command": "if echo hello | grep -q ell; then echo match; fi"
+ },
+ {
+  "name": "T3c/122-double-bracket",
+  "command": "[[ -f f.txt ]] && echo exists"
+ },
+ {
+  "name": "T3c/123-arith-in-condition",
+  "command": "i=2; if [ $((i*2)) -eq 4 ]; then echo four; fi"
+ },
+ {
+  "name": "T3c/124-exit-in-script",
+  "command": "echo before; exit 5; echo after"
+ },
+ {
+  "name": "T3c/125-set-minus-e",
+  "command": "set -e; false; echo unreachable"
+ },
+ {
+  "name": "T3h/001-heredoc-quoted-literal",
+  "command": "cat <<'EOF'\na $HOME b\nEOF"
+ },
+ {
+  "name": "T3h/002-heredoc-unquoted-expand",
+  "command": "X=val\ncat <<EOF\ngot $X\nEOF"
+ },
+ {
+  "name": "T3h/003-heredoc-write-file-then-read",
+  "command": "cat > out.md <<'EOF'\n# title\nbody line\nEOF\ncat out.md"
+ },
+ {
+  "name": "T3h/004-heredoc-then-cat-n",
+  "command": "cat > f.txt <<'EOF'\nl1\nl2\nEOF\ncat -n f.txt"
+ },
+ {
+  "name": "T3h/005-heredoc-append",
+  "command": "printf 'a\\n' > f.txt\ncat >> f.txt <<'EOF'\nb\nEOF\ncat f.txt"
+ },
+ {
+  "name": "T3h/006-heredoc-two-in-one-command",
+  "command": "cat > a.txt <<'A'\none\nA\ncat > b.txt <<'B'\ntwo\nB\ncat a.txt b.txt"
+ },
+ {
+  "name": "T3h/007-heredoc-nested-in-shell-script",
+  "command": "cat > gen.sh <<'OUTER'\ncat > inner.txt <<'INNER'\ninner-content\nINNER\nOUTER\nbash gen.sh; cat inner.txt"
+ },
+ {
+  "name": "T3h/008-heredoc-body-has-separators",
+  "command": "cat <<'EOF' > f.txt\na | b; c && d\nEOF\ncat f.txt"
+ },
+ {
+  "name": "T3h/009-heredoc-body-has-terminator-like-line",
+  "command": "cat <<'EOF' > f.txt\nEOF_not_really\n EOF\nEOF\ncat f.txt"
+ },
+ {
+  "name": "T3h/010-heredoc-indented-body",
+  "command": "cat <<'EOF' > f.txt\n  indented\nEOF\ncat -A f.txt | head -1"
+ },
+ {
+  "name": "T3h/011-heredoc-dash-strip-tabs",
+  "command": "printf 'cat <<-EOF > f.txt\\n\\ttabbed\\n\\tEOF\\ncat -A f.txt | head -1\\n'"
+ },
+ {
+  "name": "T3h/012-heredoc-python-inline",
+  "command": "python3 - <<'PY'\nprint(\"from python\")\nprint(1+1)\nPY"
+ },
+ {
+  "name": "T3h/013-heredoc-python-triple-quote",
+  "command": "python3 - <<'PY'\ns = '''multi\nline'''\nprint(len(s.splitlines()))\nPY"
+ },
+ {
+  "name": "T3h/014-heredoc-python-write-file",
+  "command": "python3 - <<'PY'\nopen('w.txt','w').write('written\\n')\nPY\ncat w.txt"
+ },
+ {
+  "name": "T3h/015-heredoc-then-pipe",
+  "command": "cat <<'EOF' | tr a-z A-Z\nabc\nEOF"
+ },
+ {
+  "name": "T3h/016-heredoc-with-stdin-redirect",
+  "command": "cat <<'EOF' > out.txt\ncontent\nEOF\nwc -l < out.txt"
+ },
+ {
+  "name": "T3h/017-heredoc-empty-body",
+  "command": "cat <<'EOF' > e.txt\nEOF\nwc -c < e.txt"
+ },
+ {
+  "name": "T3h/018-heredoc-body-blank-lines",
+  "command": "cat <<'EOF' > f.txt\na\n\nb\nEOF\nwc -l < f.txt"
+ },
+ {
+  "name": "T3h/019-heredoc-markdown-body",
+  "command": "cat > d.md <<'EOF'\n# Head\n| a | b |\n|---|---|\n`code`\nEOF\ngrep -c '|' d.md"
+ },
+ {
+  "name": "T3h/020-heredoc-quoted-double",
+  "command": "X=1\ncat <<\"EOF\"\n$X\nEOF"
+ },
+ {
+  "name": "X/002-blank-lines-mid-script",
+  "command": "echo a\n\necho b"
+ },
+ {
+  "name": "X/003-only-comment",
+  "command": "# nothing here"
+ },
+ {
+  "name": "X/004-unterminated-single-quote",
+  "command": "echo 'abc"
+ },
+ {
+  "name": "X/005-unterminated-double-quote",
+  "command": "echo \"abc"
+ },
+ {
+  "name": "X/006-unterminated-heredoc",
+  "command": "cat <<'EOF'\nbody without terminator"
+ },
+ {
+  "name": "X/007-unmatched-fi",
+  "command": "fi"
+ },
+ {
+  "name": "X/008-cd-nonexistent",
+  "command": "cd /no/such/dir/xyz; echo \"rc=$?\""
+ },
+ {
+  "name": "X/009-very-long-line",
+  "command": "printf '%s' \"$(printf 'x%.0s' $(seq 1 2000))\" | wc -c"
+ },
+ {
+  "name": "X/010-many-segments",
+  "command": "echo 1; echo 2; echo 3; echo 4; echo 5; echo 6; echo 7; echo 8; echo 9; echo 10 | tail -1"
+ },
+ {
+  "name": "X/011-deep-pipe",
+  "command": "echo hi | cat | cat | cat | cat | cat | cat"
+ },
+ {
+  "name": "X/012-redirect-to-missing-dir",
+  "command": "echo x > nodir/f.txt; echo \"rc=$?\""
+ },
+ {
+  "name": "X/013-permission-denied",
+  "command": "echo secret > f.txt; chmod 000 f.txt; cat f.txt 2>/dev/null; echo \"rc=$?\""
+ },
+ {
+  "name": "X/014-null-byte-in-file",
+  "command": "printf 'a\\0b' > bin.dat; wc -c < bin.dat"
+ },
+ {
+  "name": "X/015-utf8-content",
+  "command": "echo \"中文——测试\" | wc -m"
+ },
+ {
+  "name": "X/016-utf8-filename",
+  "command": "echo x > \"中文.txt\"; ls | wc -l"
+ },
+ {
+  "name": "X/017-semicolon-only",
+  "command": ";"
+ },
+ {
+  "name": "X/018-pipe-only",
+  "command": "|"
+ },
+ {
+  "name": "X/019-and-at-start",
+  "command": "&& echo x"
+ },
+ {
+  "name": "X/020-crlf-line-endings",
+  "command": "printf 'a\\r\\nb\\r\\n' > crlf.txt; wc -l < crlf.txt"
+ },
+ {
+  "name": "X/021-stdin-not-a-tty",
+  "command": "read -r x; echo \"rc=$?\""
+ },
+ {
+  "name": "X/022-large-output",
+  "command": "seq 1 5000 | wc -l"
+ },
+ {
+  "name": "X/023-exit-code-127",
+  "command": "nonexistent_cmd_zzz 2>/dev/null"
+ },
+ {
+  "name": "X/024-signal-exit-code",
+  "command": "sh -c 'kill -TERM $$'; echo \"rc=$?\""
+ },
+ {
+  "name": "X/025-nested-quotes-escaped",
+  "command": "echo \"he said \\\"hi\\\" and 'bye'\""
+ },
+ {
+  "name": "X/026-dollar-in-single-quote",
+  "command": "echo '$((1+1))'"
+ },
+ {
+  "name": "X/027-backtick-not-used",
+  "command": "echo `echo hi`"
+ },
+ {
+  "name": "X/028-trailing-backslash",
+  "command": "echo abc \\\n  def"
+ },
+ {
+  "name": "X/029-multiple-spaces",
+  "command": "echo    a     b"
+ },
+ {
+  "name": "X/030-tab-separator",
+  "command": "printf 'a\\tb\\n' | cut -f2"
+ }
+]
