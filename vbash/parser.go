@@ -7,6 +7,27 @@ type parser struct {
 	buf  []Token
 	err  error
 	last Token
+	stop []string
+}
+
+func (p *parser) pushStop(words ...string) { p.stop = append(p.stop, words...) }
+
+func (p *parser) popStop(n int) { p.stop = p.stop[:len(p.stop)-n] }
+
+func (p *parser) atStop(tok Token) bool {
+	if len(p.stop) == 0 {
+		return false
+	}
+	text, ok := plainText(tok)
+	if !ok {
+		return false
+	}
+	for i := len(p.stop) - 1; i >= 0; i-- {
+		if p.stop[i] == text {
+			return true
+		}
+	}
+	return false
 }
 
 type parseCtx int
@@ -251,6 +272,9 @@ func (p *parser) parseList(ctx parseCtx) (*List, error) {
 		if isOp(tok, OpSemi, OpAmp, OpAnd, OpOr, OpPipe, OpDSemi) {
 			return nil, p.unexpected(tok)
 		}
+		if p.atStop(tok) {
+			return list, nil
+		}
 		item, err := p.parseAndOr(ctx)
 		if err != nil {
 			return nil, err
@@ -371,7 +395,7 @@ func (p *parser) parseCommand(ctx parseCtx) (*Command, error) {
 		if p.endsCommand(tok) {
 			break
 		}
-		if cmd.Group != nil || cmd.Func != nil {
+		if cmd.Group != nil || cmd.Func != nil || cmd.Compound != nil {
 			if tok.Kind == TokOp && isRedirectOp(tok.Op) {
 				redir, err := p.parseRedirect(tok, DefaultFd)
 				if err != nil {
@@ -447,9 +471,14 @@ func (p *parser) parseCommand(ctx parseCtx) (*Command, error) {
 				continue
 			}
 		}
-		if len(cmd.Words) == 0 && len(cmd.Assigns) == 0 {
-			if text, ok := plainText(tok); ok && reservedWords[text] {
-				return nil, p.unsupportedCompound(text, tok.Pos)
+		if cmd.noPrefix() {
+			if text, ok := plainText(tok); ok {
+				if compound, handled, err := p.parseCompound(text); err != nil {
+					return nil, err
+				} else if handled {
+					cmd.Compound = compound
+					continue
+				}
 			}
 		}
 		if text, ok := plainText(tok); ok && strings.HasPrefix(text, "[[") {
@@ -470,22 +499,39 @@ func (p *parser) parseCommand(ctx parseCtx) (*Command, error) {
 	return cmd, nil
 }
 
-func (p *parser) unsupportedCompound(name string, pos Pos) error {
+func (p *parser) parseCompound(name string) (*Compound, bool, error) {
 	switch name {
+	case "for":
+		c, err := p.parseFor()
+		return c, true, err
+	case "while":
+		c, err := p.parseWhile(false)
+		return c, true, err
+	case "until":
+		c, err := p.parseWhile(true)
+		return c, true, err
 	case "if":
-		return unsupported("if 条件语句", "控制流属 P1，见 docs/vbash-plan.md §3.2", pos)
-	case "for", "while", "until", "select":
-		return unsupported(name+" 循环语句", "控制流属 P1/P2，见 docs/vbash-plan.md §3.2", pos)
+		c, err := p.parseIf()
+		return c, true, err
+	case "then", "elif", "else", "fi", "do", "done", "esac":
+		return nil, false, &SyntaxError{Msg: "未预期的记号 " + name, Token: name, Line: name, Pos: p.pos()}
 	case "case":
-		return unsupported("case 语句", "case 属 P2，见 docs/vbash-plan.md §3.2", pos)
+		return nil, true, unsupported("case 语句", "case 属 P2，见 docs/vbash-plan.md §3.2", p.pos())
+	case "select":
+		return nil, true, unsupported("select 语句", "不支持", p.pos())
 	case "function":
-		return unsupported("function 关键字定义函数", "改用 name() { ...; } 形式", pos)
+		return nil, true, unsupported("function 关键字定义函数", "改用 name() { ...; } 形式", p.pos())
 	case "coproc":
-		return unsupported("coproc 协程", "不支持", pos)
+		return nil, true, unsupported("coproc 协程", "不支持", p.pos())
 	case "time":
-		return unsupported("time 关键字", "不支持", pos)
+		return nil, true, unsupported("time 关键字", "不支持", p.pos())
 	}
-	return &SyntaxError{Msg: "未预期的记号 " + name, Token: name, Line: name, Pos: pos}
+	if _, ok := plainText(Token{Kind: TokWord, Text: name}); ok {
+		if reservedWords[name] {
+			return nil, false, &SyntaxError{Msg: "未预期的记号 " + name, Token: name, Line: name, Pos: p.pos()}
+		}
+	}
+	return nil, false, nil
 }
 
 func (p *parser) redirectFd(tok Token) (int, bool, error) {

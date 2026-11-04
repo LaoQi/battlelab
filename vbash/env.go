@@ -13,13 +13,15 @@ type Var struct {
 }
 
 type Env struct {
-	vars map[string]*Var
-	args []string
-	arg0 string
-	dir  string
-	home string
-	prev int
-	pid  int
+	vars   map[string]*Var
+	args   []string
+	arg0   string
+	dir    string
+	home   string
+	prev   int
+	pid    int
+	inFunc bool
+	locals []string
 }
 
 func NewEnv() *Env {
@@ -131,16 +133,27 @@ func (e *Env) Environ() []string {
 	return out
 }
 
+func (e *Env) markLocal(name string) {
+	for _, n := range e.locals {
+		if n == name {
+			return
+		}
+	}
+	e.locals = append(e.locals, name)
+}
+
 func (e *Env) Clone() *Env {
 	c := &Env{
-		vars: make(map[string]*Var, len(e.vars)),
-		args: append([]string(nil), e.args...),
-		arg0: e.arg0,
-		dir:  e.dir,
-		home: e.home,
-		prev: e.prev,
-		pid:  e.pid,
+		vars:   make(map[string]*Var, len(e.vars)),
+		args:   append([]string(nil), e.args...),
+		arg0:   e.arg0,
+		dir:    e.dir,
+		home:   e.home,
+		prev:   e.prev,
+		pid:    e.pid,
+		inFunc: e.inFunc,
 	}
+	c.locals = append([]string(nil), e.locals...)
 	for name, v := range e.vars {
 		c.vars[name] = &Var{Value: v.Value, Exported: v.Exported}
 	}

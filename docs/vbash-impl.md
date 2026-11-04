@@ -3,6 +3,63 @@
 > 配套 `docs/vbash-plan.md`（范围与决策）。本文只记**实施过程中的偏差与自定决策**，
 > 按阶段（S1…S8）分节，每节记录：做了什么、与规划不一致处、为什么。
 
+## S7 控制流（2026-11-04）
+
+### 产出
+
+| 文件 | 内容 |
+|---|---|
+| `vbash/parser_control.go` | `for`/`while`/`until`/`if`-`elif`-`else` 的递归下降解析，`expect()` 终止字校验 |
+| `vbash/runner_control.go` | 复合命令执行、`break`/`continue` 的 `loopControl` 信号与深度传播 |
+| `vbash/runner_group.go` | 子 shell（`Env` 克隆隔离）、花括号分组（共享 `Env`）、函数表与调用栈 |
+| `vbash/errexit.go` | `set -e` 触发规则与条件上下文例外 |
+| `vbash/ast.go` | 新增 `Compound{Kind,Name,Words,Cond,Body,Elifs,Else}`、`CondClause` |
+| `vbash/builtin.go` | 新增内建 `break` `continue` `local` |
+| `vbash/env.go` | `inFunc` 标记、`locals` 记录 |
+| `vbash/parser.go` | 解析器加 `stop` 词栈（`do`/`then`/`done`/`fi`/`elif`/`else`） |
+
+### 基准结果（`make vbash-self`）
+
+| 层 | 结果 |
+|---|---|
+| C / T0 / T1 / T2 / T3c / T3h / X | **全部 100%** |
+| 合计 | **193/193** |
+
+### 实现要点
+
+- **终止字栈**：`for f in a b; do ... done` 里条件与循环体都调 `parseList`，靠 `p.stop` 栈
+  决定在哪停下（`pushStop("do")` → 解析条件 → `popStop`）；`if` 在 `then`/`elif`/`else`/`fi`
+  四个词上停。没有这个栈，`parseList` 会把 `done` 当成普通命令。
+- **子 shell 与分组的区别**：`( )` 用 `r.Env.Clone()`（`cd`、变量都不回传）；`{ ; }` 直接共享
+  `r.Env`。`T3c/119` 靠这条区分（`x=2` 回传、`( x=3 )` 不回传）。
+- **函数调用**：切到克隆的 `Env`（`inFunc=true`、位置参数换成 `argv[1:]`、`arg0` 换成函数名），
+  `return` 用 `ReturnRequest` 信号穿透，`local` 靠 `inFunc` 判定合法位置。
+  函数体若是 `{ }` 分组则 `runList` 执行。
+- **`set -e` 的三条例外**（全部用真 bash 核对）：
+  1. 条件上下文（`if`/`while`/`until` 的条件）不触发 —— `inCondition()` 递增 `condDepth`
+  2. `||` 链结尾失败不触发
+  3. `&&` 链**短路未执行到末段**时不触发（`false && echo x` 后面照常执行）
+  实现上由 `runAndOr` 自己判定「链尾段是否真的执行且失败」，而不是让 `runList` 事后检查
+  ——后者拿不到短路信息，会把 `false && echo x` 误判成需要退出。
+- **`break`/`continue` 带深度**：`loopControl{depth}` 逐层递减，`break 2` 能跳出双层循环。
+
+### 与规划的偏差与自定决策
+
+| # | 情况 | 处理 | 理由 |
+|---|---|---|---|
+| S7-1 | 规划 §3.2 列 `for`/`if` 为 P1，`while`/函数/`case` 为 P2 | `for`/`if`/`while`/`until`/函数/分组全部实现，`case`/`select`/`function`/`coproc`/`time` 仍报 `UnsupportedError` | 基准里 `while` 与函数有专门用例，做完能让 `T3c` 到 100%，成本很低 |
+| S7-2 | 规划未提 `break`/`continue` | 作为内建实现（含 `break N` 深度） | 基准 `T3c/105`、`106` 需要；不实现这两条无法通过 |
+| S7-3 | 规划把 `set -e` 放 P1 但未定义例外 | 实现三条例外并在 `TestRunSetMinusEChains` 覆盖 | 不做例外会让 `set -e; false && echo x` 行为与 bash 不符 |
+| S7-4 | 规划 §3.4 说 `wait` 报错 | 维持 S3 的无害内建 | 已在 S3 决策，S7 无变化 |
+| S7-5 | `local` 不在规划的内建清单里 | 加入（仅函数内合法） | `T3c/116` 需要；它是 bash builtin，符合 D5 |
+
+### 验收
+
+- `go build ./... && go vet ./... && go test ./... && go test -race ./...` 全绿；`make cross` OK
+- `make vbash-self`：**193/193**，七层全部 100%
+- 新增执行层用例：`for`/`while`/`if`-`elif`-`else`/`break`(含深度)/`continue`/子 shell/分组/
+  函数(返回码、`local`、`$1`)/`set -e`(五种链式组合 + 条件上下文)/嵌套控制流/`while read`
+
 ## S3 执行层（2026-11-04）
 
 ### 产出

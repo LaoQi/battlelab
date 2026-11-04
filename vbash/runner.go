@@ -18,20 +18,16 @@ type Runner struct {
 	Verbose   bool
 	Exec      Handler
 
-	expn      *expansion
-	ErrExit   bool
-	subStatus int
-
-	bgMu sync.Mutex
-	bg   []*bgJob
+	expn          *expansion
+	ErrExit       bool
+	subStatus     int
+	funcs         map[string]*funcDef
+	saveDepth     int
+	condDepth     int
+	exemptErrExit bool
 }
 
 type Handler func(ctx context.Context, r *Runner, argv []string, io *IO) (int, error)
-
-type bgJob struct {
-	argv []string
-	io   *IO
-}
 
 type ExecResult struct {
 	ExitCode int
@@ -117,6 +113,11 @@ func (r *Runner) runList(list *List, io *IO) (int, error) {
 		if err != nil {
 			return code, err
 		}
+		if len(item.AndOr.Pipes) == 1 {
+			if e := r.checkErrExit(); e != nil {
+				return code, e
+			}
+		}
 	}
 	r.Env.SetStatus(code)
 	return code, nil
@@ -126,6 +127,12 @@ func (r *Runner) runAndOr(and *AndOr, io *IO) (int, error) {
 	code := 0
 	var err error
 	skip := false
+	chain := len(and.Pipes) > 1
+	lastOp := OpNone
+	if chain {
+		lastOp = and.Pipes[len(and.Pipes)-2].Op
+	}
+	reached := false
 	for i, p := range and.Pipes {
 		if i > 0 {
 			switch and.Pipes[i-1].Op {
@@ -140,11 +147,23 @@ func (r *Runner) runAndOr(and *AndOr, io *IO) (int, error) {
 		if skip {
 			continue
 		}
+		if chain {
+			r.condDepth++
+		}
 		code, err = r.runPipeline(p.Pipeline, io)
+		if chain {
+			r.condDepth--
+		}
 		if err != nil {
 			return code, err
 		}
 		r.Env.SetStatus(code)
+		reached = i == len(and.Pipes)-1
+	}
+	if chain && reached && code != 0 && r.ErrExit && r.condDepth == 0 {
+		if lastOp != OpOr {
+			return code, ExitRequest{Code: code}
+		}
 	}
 	return code, nil
 }
@@ -217,15 +236,46 @@ func (r *Runner) runPipeline(pl *Pipeline, io *IO) (int, error) {
 }
 
 func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
-	if cmd.Group != nil {
-		r.diagf(io.Err, cmd.Pos, "子 shell 与分组暂不支持执行")
-		r.Env.SetStatus(1)
-		return 1, nil
+	if cmd.Compound != nil {
+		io2, cleanup, err := r.applyRedirects(cmd, io)
+		if err != nil {
+			if errors.Is(err, errRedirectFailed) {
+				r.Env.SetStatus(1)
+				return 1, nil
+			}
+			return 1, err
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
+		return r.runCompound(cmd.Compound, io2)
 	}
 	if cmd.Func != nil {
-		r.diagf(io.Err, cmd.Pos, "函数定义暂不支持执行")
-		r.Env.SetStatus(1)
-		return 1, nil
+		r.registerFunc(cmd.Func.Name, cmd.Func.Body)
+		r.Env.SetStatus(0)
+		return 0, nil
+	}
+	if cmd.Group != nil {
+		io2, gcleanup, err := r.applyRedirects(cmd, io)
+		if err != nil {
+			if errors.Is(err, errRedirectFailed) {
+				r.Env.SetStatus(1)
+				return 1, nil
+			}
+			return 1, err
+		}
+		if gcleanup != nil {
+			defer gcleanup()
+		}
+		var code int
+		var gerr error
+		if cmd.GroupKind == GroupSubshell {
+			code, gerr = r.runSubshell(cmd.Group, io2)
+		} else {
+			code, gerr = r.runBraceGroup(cmd.Group, io2)
+		}
+		r.Env.SetStatus(code)
+		return code, gerr
 	}
 	io, cleanup, err := r.applyRedirects(cmd, io)
 	if err != nil {
@@ -285,6 +335,9 @@ func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
 
 func (r *Runner) dispatch(argv []string, io *IO, pos Pos) (int, error) {
 	name := argv[0]
+	if code, ok, err := r.callFunc(name, argv, io); ok {
+		return code, err
+	}
 	if canBuiltin(name) {
 		code, handled, err := r.runBuiltin(name, argv, io, pos)
 		if handled {

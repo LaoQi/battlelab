@@ -1,3 +1,15 @@
+## 2026-11-04 feat(vbash): S7 控制流——基准 193/193 全绿
+
+- **复合命令**（`vbash/parser_control.go`、`runner_control.go`、AST 新增 `Compound`/`CondClause`）：`for … in …; do … done`、`while`/`until …; do … done`、`if`-`elif`-`else`-`fi` 完整解析与执行
+- **终止字栈**（`parser.go` 的 `p.stop`）：`parseList` 靠栈决定在 `do`/`then`/`done`/`fi`/`elif`/`else` 处停止；没有它会把 `done` 当普通命令
+- **子 shell 与分组**（`runner_group.go`）：`( )` 用 `Env` 克隆隔离（`cd`、变量都不回传），`{ ; }` 共享 `Env`——`T3c/119` 正是靠这条区分
+- **函数**：定义登记到 `funcs` 表；调用时切克隆 `Env`（`inFunc`、位置参数换 `argv[1:]`、`arg0` 换函数名），`return` 以 `ReturnRequest` 穿透，新增内建 `local`（仅函数内合法）
+- **`break`/`continue`**：`loopControl{depth}` 逐层递减，支持 `break 2` 跳出双层循环
+- **`set -e`**（`errexit.go`）三条例外全部用真 bash 核对：条件上下文不触发（`inCondition` 递增 `condDepth`）、`||` 链尾失败不触发、`&&` 链**短路未执行到末段**不触发。判定放在 `runAndOr` 内（只有它知道是否短路），否则 `set -e; false && echo x` 会被误判退出
+- **仍未支持**（按规划 D7 保持报错）：`case`/`esac`、`select`、`function` 关键字、`coproc`、`time`、`[[ ]]`
+- **实测**：`make vbash-self` **193/193** —— C / T0 / T1 / T2 / T3c / T3h / X 七层全部 **100%**（S3 时为 172/193）。`go build`/`vet`/`test`/`test -race`/`make cross` 全绿
+- **文档**：`docs/vbash-impl.md` 新增 S7 节（产物、基准矩阵、实现要点、偏差 S7-1…S7-5）
+
 ## 2026-11-04 feat(vbash): S3–S6 执行层、展开、重定向与跨平台诊断
 
 - **执行器**（`vbash/runner.go`）：列表 / `&&`、`||` 短路 / 管道（各段独立 `Env` 克隆，`-race` 干净）/ 命令 / 重定向套用；`RunScript` + `Config` 自带入口，不依赖 `tools/shell`

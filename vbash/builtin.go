@@ -11,23 +11,26 @@ import (
 type builtinFunc func(r *Runner, argv []string, io *IO, pos Pos) (int, error)
 
 var builtins = map[string]builtinFunc{
-	":":      builtinColon,
-	"true":   builtinTrue,
-	"false":  builtinFalse,
-	"echo":   builtinEcho,
-	"printf": builtinPrintf,
-	"cd":     builtinCd,
-	"pwd":    builtinPwd,
-	"export": builtinExport,
-	"unset":  builtinUnset,
-	"set":    builtinSet,
-	"shift":  builtinShift,
-	"exit":   builtinExit,
-	"return": builtinReturn,
-	"read":   builtinRead,
-	"wait":   builtinWait,
-	"test":   builtinTest,
-	"[":      builtinTest,
+	":":        builtinColon,
+	"true":     builtinTrue,
+	"false":    builtinFalse,
+	"echo":     builtinEcho,
+	"printf":   builtinPrintf,
+	"cd":       builtinCd,
+	"pwd":      builtinPwd,
+	"export":   builtinExport,
+	"unset":    builtinUnset,
+	"set":      builtinSet,
+	"shift":    builtinShift,
+	"exit":     builtinExit,
+	"return":   builtinReturn,
+	"read":     builtinRead,
+	"wait":     builtinWait,
+	"local":    builtinLocal,
+	"break":    builtinBreak,
+	"continue": builtinContinue,
+	"test":     builtinTest,
+	"[":        builtinTest,
 }
 
 func canBuiltin(name string) bool {
@@ -42,6 +45,50 @@ func (r *Runner) runBuiltin(name string, argv []string, io *IO, pos Pos) (int, b
 	}
 	code, err := fn(r, argv, io, pos)
 	return code, true, err
+}
+
+func builtinLocal(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
+	if !r.Env.inFunc {
+		r.diagfName(io.Err, pos, "local", "can only be used in a function")
+		return 1, nil
+	}
+	code := 0
+	for _, a := range argv[1:] {
+		if a == "--" || strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, value := a, ""
+		if i := strings.IndexByte(a, '='); i > 0 {
+			name, value = a[:i], a[i+1:]
+		}
+		if !validAssignName(name) {
+			r.diagfName(io.Err, pos, "local", "%s: not a valid identifier", "`"+a+"'")
+			code = 1
+			continue
+		}
+		r.Env.markLocal(name)
+		r.Env.Set(name, value, false)
+	}
+	return code, nil
+}
+
+func builtinBreak(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
+	n := loopDepthArg(argv)
+	return 0, &loopControl{signal: loopBreak, depth: n}
+}
+
+func builtinContinue(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
+	n := loopDepthArg(argv)
+	return 0, &loopControl{signal: loopContinue, depth: n}
+}
+
+func loopDepthArg(argv []string) int {
+	if len(argv) > 1 {
+		if n, ok := parseInt(argv[1]); ok && n > 0 {
+			return n
+		}
+	}
+	return 1
 }
 
 func builtinWait(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
@@ -676,7 +723,9 @@ func builtinReturn(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 			code = v & 0xff
 		}
 	}
-	r.diagfName(io.Err, pos, "return", "can only `return' from a function or sourced script")
+	if !r.Env.inFunc {
+		r.diagfName(io.Err, pos, "return", "can only `return' from a function or sourced script")
+	}
 	return code, ReturnRequest{Code: code}
 }
 

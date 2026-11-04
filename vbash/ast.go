@@ -49,7 +49,35 @@ type Command struct {
 	Group     *List
 	GroupKind GroupKind
 	Func      *FuncDef
+	Compound  *Compound
 	Pos       Pos
+}
+
+type CompoundKind int
+
+const (
+	CompoundNone CompoundKind = iota
+	CompoundFor
+	CompoundWhile
+	CompoundUntil
+	CompoundIf
+)
+
+type Compound struct {
+	Kind  CompoundKind
+	Name  string
+	Words []Word
+	Cond  *List
+	Body  *List
+	Elifs []*CondClause
+	Else  *List
+	Pos   Pos
+}
+
+type CondClause struct {
+	Cond *List
+	Body *List
+	Pos  Pos
 }
 
 type FuncDef struct {
@@ -130,11 +158,17 @@ func redirectsToStdin(op OpKind) bool {
 }
 
 func (c *Command) noPrefix() bool {
-	return len(c.Words) == 0 && len(c.Assigns) == 0 && len(c.Redirs) == 0 && c.Group == nil && c.Func == nil
+	return len(c.Words) == 0 && len(c.Assigns) == 0 && len(c.Redirs) == 0 &&
+		c.Group == nil && c.Func == nil && c.Compound == nil
+}
+
+func (c *Command) isSimple() bool {
+	return c.Group == nil && c.Func == nil && c.Compound == nil
 }
 
 func (c *Command) IsEmpty() bool {
-	return len(c.Assigns) == 0 && len(c.Words) == 0 && len(c.Redirs) == 0 && c.Group == nil && c.Func == nil
+	return len(c.Assigns) == 0 && len(c.Words) == 0 && len(c.Redirs) == 0 &&
+		c.Group == nil && c.Func == nil && c.Compound == nil
 }
 
 func (l *List) String() string {
@@ -217,6 +251,9 @@ func (c *Command) String() string {
 		}
 		b.WriteString(quoteForDump(w.Text))
 	}
+	if c.Compound != nil {
+		b.WriteString(c.Compound.String())
+	}
 	if c.Func != nil {
 		b.WriteString("函数 ")
 		b.WriteString(c.Func.Name)
@@ -261,4 +298,36 @@ func quoteForDump(s string) string {
 		return strconv.Quote(s)
 	}
 	return s
+}
+
+func (c *Compound) String() string {
+	if c == nil {
+		return ""
+	}
+	switch c.Kind {
+	case CompoundFor:
+		return "for " + c.Name + " in " + joinWords(c.Words) + " do " + c.Body.String() + " done"
+	case CompoundWhile:
+		return "while " + c.Cond.String() + " do " + c.Body.String() + " done"
+	case CompoundUntil:
+		return "until " + c.Cond.String() + " do " + c.Body.String() + " done"
+	case CompoundIf:
+		s := "if " + c.Cond.String() + " then " + c.Body.String()
+		for _, e := range c.Elifs {
+			s += " elif " + e.Cond.String() + " then " + e.Body.String()
+		}
+		if c.Else != nil {
+			s += " else " + c.Else.String()
+		}
+		return s + " fi"
+	}
+	return ""
+}
+
+func joinWords(ws []Word) string {
+	parts := make([]string, 0, len(ws))
+	for _, w := range ws {
+		parts = append(parts, w.Text)
+	}
+	return strings.Join(parts, " ")
 }

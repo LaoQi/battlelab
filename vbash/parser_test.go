@@ -339,18 +339,41 @@ func TestParseCommentStripped(t *testing.T) {
 }
 
 func TestParseUnsupportedCompounds(t *testing.T) {
-	cases := map[string]string{
-		"if [ -f f ]; then echo y; fi":     "if",
-		"for f in *.txt; do echo $f; done": "for",
-		"case $v in a) echo A;; esac":      "case",
-		"while true; do echo x; done":      "while",
-		"[[ -f f ]] && echo y":             "[",
+	cases := []string{
+		"case $v in a) echo A;; esac",
+		"[[ -f f ]] && echo y",
+		"select x in a b; do echo $x; done",
+		"time echo hi",
 	}
-	for src := range cases {
+	for _, src := range cases {
 		_, err := Parse(src)
 		var ue *UnsupportedError
 		if !errors.As(err, &ue) {
 			t.Errorf("%q 应报 UnsupportedError，得到 %v", src, err)
+		}
+	}
+}
+
+func TestParseControlFlow(t *testing.T) {
+	cases := []string{
+		"if [ -f f ]; then echo y; fi",
+		"if [ -f f ]; then echo y; else echo n; fi",
+		"if false; then a; elif true; then b; else c; fi",
+		"for f in a b c; do echo $f; done",
+		"for f in *.txt; do echo $f; done",
+		"while [ $i -lt 3 ]; do echo $i; done",
+		"until false; do echo x; done",
+		"for i in 1 2; do if [ $i = 1 ]; then echo one; fi; done",
+	}
+	for _, src := range cases {
+		list, err := Parse(src)
+		if err != nil {
+			t.Errorf("%q 应能解析，得到 %v", src, err)
+			continue
+		}
+		cmd := list.Items[0].AndOr.Pipes[0].Pipeline.Commands[0]
+		if cmd.Compound == nil {
+			t.Errorf("%q 未解析为复合命令", src)
 		}
 	}
 }
