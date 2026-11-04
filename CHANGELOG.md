@@ -1,3 +1,15 @@
+## 2026-11-04 fix(vbash): 管道读端由消费方关闭，消除 fd 数据竞争
+
+- **症状**：`go test -race` 偶发 `TestRunPipeline` 数据竞争——主协程在 `wg.Wait()` 之前
+  就批量 `pr.Close()`，而消费方协程可能仍在 `exec.StartProcess` 里读同一个 `*os.File` 的 fd。
+  这不只是 race 报告：子进程可能拿到已关闭的 fd
+- **`vbash/runner.go`**：改由每个管道的**消费方**关闭读端——`pending` 记录上一段的读端，
+  取用时移交给当前段，消费方命令结束后（含协程 defer）关闭；主协程不再提前批量关闭
+- 建管道失败时先关已持有的读端、再 `wg.Wait()`，避免协程持有失效读端
+- **`vbash/pipeline_test.go`**（新）：100 轮重复管道（fd 泄漏）、三段管道、5 万行吞吐、
+  消费方 `while read` 逐行读取
+- 实测：全量竞态 10 轮零失败（改前约 1/5 概率复现）；200 次管道循环 fd 峰值仅 3
+
 ## 2026-11-04 fix(vbash): 大词解析从 O(n²) 降为 O(n)
 
 - **症状**：`wordBuilder.literal` 对尾部字面量逐字符 `Text += s`，字符串每轮整段复制，

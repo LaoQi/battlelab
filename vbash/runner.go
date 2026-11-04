@@ -212,41 +212,48 @@ func (r *Runner) runPipeline(pl *Pipeline, io *IO) (int, error) {
 		err  error
 	}
 	results := make([]result, len(pl.Commands))
-	readers := make([]*os.File, 0, len(pl.Commands)-1)
 	var wg sync.WaitGroup
 	in := io.In
+	var pending *os.File
 	base := r.Env.Clone()
 	for i, cmd := range pl.Commands {
 		last := i == len(pl.Commands)-1
 		branch := r.branch(base.Clone(), io)
 		childIO := io.clone()
 		childIO.In = in
+		consumed := pending
 		if !last {
 			pr, pw, err := os.Pipe()
 			if err != nil {
-				for _, rd := range readers {
-					rd.Close()
+				if consumed != nil {
+					consumed.Close()
 				}
+				wg.Wait()
 				return 1, err
 			}
 			childIO.Out = pw
-			readers = append(readers, pr)
+			pending = pr
 			in = pr
 			wg.Add(1)
 			idx := i
 			go func() {
 				defer wg.Done()
+				defer func() {
+					pw.Close()
+					if consumed != nil {
+						consumed.Close()
+					}
+				}()
 				code, runErr := branch.runCommand(cmd, childIO)
-				pw.Close()
 				results[idx] = result{code: code, err: runErr}
 			}()
 			continue
 		}
 		code, runErr := branch.runCommand(cmd, childIO)
+		if consumed != nil {
+			consumed.Close()
+		}
 		results[i] = result{code: code, err: runErr}
-	}
-	for _, pr := range readers {
-		pr.Close()
 	}
 	wg.Wait()
 	for _, res := range results {
