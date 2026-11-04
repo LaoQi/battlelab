@@ -80,6 +80,7 @@ tool, err := shell.New(shell.Config{
 | `;&` / `;;&` | `UnsupportedError`（`case` 分支符） |
 | `select` / `coproc` / `time` / `function` 关键字 | `UnsupportedError` |
 | 数组 `a=(1 2)`、`${a[1]}` | 语法错误 / bad substitution |
+| 嵌套超过 64 层（`$()` / `${}` / `$(( ))`） | `SyntaxError`，退出码 2（保护宿主不被撑爆内存） |
 | 大括号展开 `{a,b}`、`{1..3}` | **不展开，按字面输出** |
 | 别名 `alias`、`source`/`.`、`eval`、`exec`、`declare`、`type`、`command`、`trap`、`ulimit`、`umask`、`getopts`、`mapfile`、`jobs`/`fg`/`bg`/`kill` | 按普通命令处理 → `command not found`（退出码 127） |
 
@@ -117,6 +118,19 @@ tool, err := shell.New(shell.Config{
 | 后台 `&` | 启动后**等待完成**（不是真后台） | 立即返回 |
 | 外部命令的 fd 3+ | 不支持（`3>&1` 对子进程无效） | 支持 |
 | `echo -e 'a\0101b'`（`\0NNN` 八进制） | 不解释，按字面输出 | → `aAb` |
+
+### 3.4 嵌套深度上限
+
+`$()`、`${…}`、`$(( … ))` 三处嵌套都受 `maxNestDepth = 64` 限制，超限直接报语法错误：
+
+```
+$ vbashrun -c 'echo $($($(...)))'   # 超过 64 层
+/bin/bash: -c: line 1: syntax error near unexpected token `$('
+```
+
+这条上限是**安全阀**，不是兼容性缺口：无上限时 lexer 会逐层复制内层文本（O(n²)），
+深层输入能把宿主进程撑到内核 OOM killer 出手——`recover()` 拦不住 OOM，只能靠提前拒绝。
+真实脚本实测远低于 10 层，64 层留了充足余量。
 
 ## 4 语义细节速查
 

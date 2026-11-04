@@ -1,3 +1,17 @@
+## 2026-11-04 fix(vbash): 嵌套深度上限，堵住深层括号 `$()`/`${}`/`$(( ))` 撑爆内存
+
+- **症状**：深层嵌套 `$( $( $( ... ) ) )` 会让 lexer 逐层复制内层文本（O(n²)）且无任何深度上限，
+  十万层输入需数十 GB 内存。真实事故中宿主进程被内核 OOM killer 直接收割，
+  `recover()` 接不住（OOM 与栈溢出都不是 panic）
+- **`vbash/lexer.go`**：`readCmdSub`/`readBraced`/`readArith` 扫描括号时即守 `maxNestDepth`（64 层），
+  超限立刻返回 `SyntaxError`——在累积大块文本之前就中止，5 万层输入 0.00s 报错（改前 7.1s）
+- **`vbash/parser.go`**：`Parse` 拆出 `parseAt(src, depth)`，`resolveWord` 递归解析 `$(...)` 内层时
+  传递并检查深度；错误走 `Token: "$("` + 说明行，不再把中文消息塞进 `near unexpected token` 位
+- **`vbash/expand.go`**：`expandArbitrary`（`${x:-...}` 等参数展开的递归）加同样的深度门槛
+- **`vbash/arith.go`**：`parsePrimary` 的括号递归加深度门槛
+- **`vbash/nestdepth_test.go`**（新）：四个用例守上限内可解析、超限报错、5 万层不得退化（含耗时上界）
+- 深度上限取 64：远高于真实脚本（实测常见脚本 < 10 层），足以挡住病态输入
+
 ## 2026-11-04 docs(vbash): 新增能力清单文档
 
 - **`docs/vbash-capability.md`**（新）：面向使用者的能力清单——定位、开关用法与装配校验、

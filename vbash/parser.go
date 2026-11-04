@@ -2,12 +2,15 @@ package vbash
 
 import "strings"
 
+const maxNestDepth = 64
+
 type parser struct {
-	lex  *lexer
-	buf  []Token
-	err  error
-	last Token
-	stop []string
+	lex   *lexer
+	buf   []Token
+	err   error
+	last  Token
+	stop  []string
+	depth int
 }
 
 func (p *parser) pushStop(words ...string) { p.stop = append(p.stop, words...) }
@@ -39,7 +42,11 @@ const (
 )
 
 func Parse(src string) (*List, error) {
-	p := &parser{lex: newLexer(src)}
+	return parseAt(src, 0)
+}
+
+func parseAt(src string, depth int) (*List, error) {
+	p := &parser{lex: newLexer(src), depth: depth}
 	return p.parseSource()
 }
 
@@ -57,13 +64,13 @@ func (p *parser) parseSource() (*List, error) {
 		return nil, p.unexpected(tok)
 	}
 	p.lex.finishHeredocs()
-	if err := resolveSubstitutions(list); err != nil {
+	if err := resolveSubstitutions(list, p.depth); err != nil {
 		return nil, err
 	}
 	return list, nil
 }
 
-func resolveSubstitutions(list *List) error {
+func resolveSubstitutions(list *List, depth int) error {
 	if list == nil {
 		return nil
 	}
@@ -71,27 +78,27 @@ func resolveSubstitutions(list *List) error {
 		for _, pipe := range item.AndOr.Pipes {
 			for _, cmd := range pipe.Pipeline.Commands {
 				for i := range cmd.Words {
-					if err := resolveWord(&cmd.Words[i]); err != nil {
+					if err := resolveWord(&cmd.Words[i], depth); err != nil {
 						return err
 					}
 				}
 				for _, a := range cmd.Assigns {
-					if err := resolveWord(&a.Value); err != nil {
+					if err := resolveWord(&a.Value, depth); err != nil {
 						return err
 					}
 				}
 				for _, r := range cmd.Redirs {
-					if err := resolveWord(&r.Target); err != nil {
+					if err := resolveWord(&r.Target, depth); err != nil {
 						return err
 					}
 				}
 				if cmd.Group != nil {
-					if err := resolveSubstitutions(cmd.Group); err != nil {
+					if err := resolveSubstitutions(cmd.Group, depth); err != nil {
 						return err
 					}
 				}
 				if cmd.Func != nil && cmd.Func.Body != nil {
-					if err := resolveSubstitutions(cmd.Func.Body.Group); err != nil {
+					if err := resolveSubstitutions(cmd.Func.Body.Group, depth); err != nil {
 						return err
 					}
 				}
@@ -101,13 +108,21 @@ func resolveSubstitutions(list *List) error {
 	return nil
 }
 
-func resolveWord(w *Word) error {
+func resolveWord(w *Word, depth int) error {
 	for i := range w.Segments {
 		seg := &w.Segments[i]
 		if seg.Kind != SegCmdSub || seg.Sub != nil || seg.Inner == "" {
 			continue
 		}
-		list, err := Parse(seg.Inner)
+		if depth >= maxNestDepth {
+			return &SyntaxError{
+				Msg:   "命令替换嵌套过深（上限 " + itoa(maxNestDepth) + " 层）",
+				Token: "$(",
+				Line:  "命令替换嵌套超过 " + itoa(maxNestDepth) + " 层",
+				Pos:   seg.Pos,
+			}
+		}
+		list, err := parseAt(seg.Inner, depth+1)
 		if err != nil {
 			return err
 		}

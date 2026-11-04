@@ -5,9 +5,10 @@ import (
 )
 
 type expansion struct {
-	env  *Env
-	runs *Runner
-	io   *IO
+	env   *Env
+	runs  *Runner
+	io    *IO
+	depth int
 }
 
 func (x *expansion) commandSubstitution(seg Segment) (string, error) {
@@ -598,6 +599,11 @@ func (x *expansion) expandArbitrary(text string) (string, error) {
 	if text == "" {
 		return "", nil
 	}
+	if x.depth >= maxNestDepth {
+		return "", &SyntaxError{Msg: "参数展开嵌套过深（上限 " + itoa(maxNestDepth) + " 层）"}
+	}
+	x.depth++
+	defer func() { x.depth-- }()
 	segs, err := lexWordSegments(text)
 	if err != nil {
 		return "", err

@@ -493,6 +493,9 @@ func (l *lexer) readArith(w *wordBuilder, pos Pos) error {
 		switch r {
 		case '(':
 			depth++
+			if depth > maxNestDepth {
+				return &SyntaxError{Msg: "算术表达式嵌套过深（上限 " + itoa(maxNestDepth) + " 层）", Pos: start}
+			}
 		case ')':
 			if depth == 0 && l.peek() == ')' {
 				l.advance()
@@ -536,6 +539,9 @@ func (l *lexer) readCmdSub(w *wordBuilder, pos Pos) error {
 			quote = r
 		case '(':
 			depth++
+			if depth > maxNestDepth {
+				return &SyntaxError{Msg: "括号嵌套过深（上限 " + itoa(maxNestDepth) + " 层）", Pos: start}
+			}
 		case ')':
 			if depth == 0 {
 				inner := b.String()
@@ -566,6 +572,9 @@ func (l *lexer) readBraced(w *wordBuilder, pos Pos) error {
 		switch r {
 		case '{':
 			depth++
+			if depth > maxNestDepth {
+				return &SyntaxError{Msg: "花括号嵌套过深（上限 " + itoa(maxNestDepth) + " 层）", Pos: start}
+			}
 		case '}':
 			if depth == 0 {
 				inner := b.String()

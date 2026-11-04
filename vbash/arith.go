@@ -5,10 +5,11 @@ import (
 )
 
 type arithParser struct {
-	src  []rune
-	i    int
-	env  *Env
-	expn *expansion
+	src   []rune
+	i     int
+	env   *Env
+	expn  *expansion
+	depth int
 }
 
 func (x *expansion) arith(expr string) (int, error) {
@@ -334,7 +335,12 @@ func (a *arithParser) parsePrimary() (int, error) {
 		return 0, runtimeErrf(Pos{}, "syntax error: operand expected")
 	}
 	if a.accept("(") {
+		if a.depth >= maxNestDepth {
+			return 0, runtimeErrf(Pos{}, "算术表达式嵌套过深（上限 %d 层）", maxNestDepth)
+		}
+		a.depth++
 		v, err := a.parseComma()
+		a.depth--
 		if err != nil {
 			return 0, err
 		}
