@@ -25,4 +25,15 @@ vbash-record:
 vbash-naive:
 	@cd $(VBASH_DIR) && ./run.py --target ./tools/reference-naive.py
 
-.PHONY: test cross vbash-check vbash-record vbash-naive
+vbash-run:
+	@go build -o /tmp/vbashrun ./vbash/testdata/cmd/vbashrun
+
+vbash-self:
+	@go build -o /tmp/vbashrun ./vbash/testdata/cmd/vbashrun
+	@cd $(VBASH_DIR) && ./run.py --target /tmp/vbashrun || true
+
+vbash-self-detail:
+	@go build -o /tmp/vbashrun ./vbash/testdata/cmd/vbashrun
+	@cd $(VBASH_DIR) && ./run.py --target /tmp/vbashrun -v --max-fail-print 100 || true
+
+.PHONY: test cross vbash-check vbash-record vbash-naive vbash-run vbash-self vbash-self-detail

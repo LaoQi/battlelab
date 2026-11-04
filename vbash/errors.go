@@ -20,8 +20,11 @@ func unsupported(construct, hint string, pos Pos) error {
 }
 
 type SyntaxError struct {
-	Msg string
-	Pos Pos
+	Msg   string
+	Token string
+	Line  string
+	EOF   bool
+	Pos   Pos
 }
 
 func (e *SyntaxError) Error() string {

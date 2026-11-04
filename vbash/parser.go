@@ -19,6 +19,10 @@ const (
 
 func Parse(src string) (*List, error) {
 	p := &parser{lex: newLexer(src)}
+	return p.parseSource()
+}
+
+func (p *parser) parseSource() (*List, error) {
 	list, err := p.parseList(ctxTop)
 	if err != nil {
 		p.lex.finishHeredocs()
@@ -132,7 +136,40 @@ func (p *parser) next() (Token, error) {
 func (p *parser) pos() Pos { return p.last.End }
 
 func (p *parser) unexpected(tok Token) error {
-	return &SyntaxError{Msg: "未预期的记号 " + tok.String(), Pos: tok.Pos}
+	return &SyntaxError{Msg: "未预期的记号 " + tok.String(), Token: bashTokenName(tok), Line: tok.Text, Pos: tok.Pos}
+}
+
+func bashTokenName(tok Token) string {
+	switch tok.Kind {
+	case TokEOF:
+		return "end of file"
+	case TokNewline:
+		return "newline"
+	case TokOp:
+		switch tok.Op {
+		case OpSemi:
+			return ";"
+		case OpDSemi:
+			return ";;"
+		case OpAnd:
+			return "&&"
+		case OpOr:
+			return "||"
+		case OpPipe:
+			return "|"
+		case OpAmp:
+			return "&"
+		case OpLess:
+			return "<"
+		case OpGreat:
+			return ">"
+		case OpLParen:
+			return "("
+		case OpRParen:
+			return ")"
+		}
+	}
+	return tok.Text
 }
 
 func isOp(tok Token, ops ...OpKind) bool {
@@ -448,7 +485,7 @@ func (p *parser) unsupportedCompound(name string, pos Pos) error {
 	case "time":
 		return unsupported("time 关键字", "不支持", pos)
 	}
-	return &SyntaxError{Msg: "未预期的记号 " + name, Pos: pos}
+	return &SyntaxError{Msg: "未预期的记号 " + name, Token: name, Line: name, Pos: pos}
 }
 
 func (p *parser) redirectFd(tok Token) (int, bool, error) {
@@ -666,21 +703,29 @@ func splitWord(w Word, n int) (Word, Word) {
 			head.Segments = append(head.Segments, seg)
 			head.Text += seg.Text
 			left -= len(runes)
+			if left > 0 && seg.Kind != SegLiteral {
+				left = 0
+			}
 			continue
 		}
 		offset := left
-		if offset > 0 {
-			part := string(runes[:offset])
-			head.Segments = append(head.Segments, Segment{Text: part, Mode: seg.Mode, Pos: seg.Pos})
-			head.Text += part
-		}
 		left = 0
-		rest := string(runes[offset:])
-		tail.Segments = append(tail.Segments, Segment{Text: rest, Mode: seg.Mode, Pos: seg.Pos})
-		tail.Text += rest
+		if offset > 0 {
+			part := seg
+			part.Text = string(runes[:offset])
+			head.Segments = append(head.Segments, part)
+			head.Text += part.Text
+		}
+		rest := seg
+		rest.Text = string(runes[offset:])
+		tail.Segments = append(tail.Segments, rest)
+		tail.Text += rest.Text
 	}
 	if head.Text == "" {
 		head.Segments = nil
+	}
+	if tail.Text == "" {
+		tail.Segments = nil
 	}
 	return head, tail
 }

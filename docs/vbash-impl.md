@@ -3,6 +3,77 @@
 > 配套 `docs/vbash-plan.md`（范围与决策）。本文只记**实施过程中的偏差与自定决策**，
 > 按阶段（S1…S8）分节，每节记录：做了什么、与规划不一致处、为什么。
 
+## S3 执行层（2026-11-04）
+
+### 产出
+
+| 文件 | 内容 |
+|---|---|
+| `vbash/env.go` | `Env` 变量表（值 + 导出标志）、位置参数、`$?`/`$#`/`$@`/`$$`/`PWD` 等特殊参数、`Clone` |
+| `vbash/io.go` | `IO` 三流 + 额外 fd 表、克隆、`/dev/null` 汇 |
+| `vbash/expand.go` | 展开：字面/变量/`${...}`/`$((...)`/`$(...)`、IFS 字段切分、`~` 展开、glob、`${...}` 全套算子 |
+| `vbash/arith.go` | `$(( ))` 递归下降求值（优先级、赋值、三元、比较、位运算、进制） |
+| `vbash/glob.go` / `match.go` | glob 展开与自有的模式匹配器（`*` 可跨 `/`，与 bash 的 `##`/`%%` 语义一致） |
+| `vbash/redirect.go` | 重定向落地：fd 复制、`&>`、`>|`、`<>`、heredoc 体（含引号化判断）、`/dev/null` |
+| `vbash/exec.go` | 外部程序透传：`$PATH` 查找、126/127/128+signum、`argv[0]` 原样、信号诊断 |
+| `vbash/builtin.go` | 内建：`:` `true` `false` `echo` `printf` `cd` `pwd` `export` `unset` `set` `shift` `exit` `return` `read` `wait` |
+| `vbash/test.go` | `test`/`[` 求值（`-e -f -d -s -r -w -x -L`、`=`/`!=`/`-eq` 系列、`-z`/`-n`） |
+| `vbash/runner.go` | 执行器：列表/and-or/管道（各段独立 Env 副本，避免竞争）/命令/重定向套用 |
+| `vbash/diag.go` | 诊断文案：`<shell>: line N: ...`、`syntax error near unexpected token`、EOF 与 heredoc 告警 |
+| `vbash/runner_test.go` | 执行层单测 30 组 |
+| `vbash/testdata/cmd/vbashrun` | 基准适配器：把 vbash 包装成 `bash -c` 兼容可执行文件 |
+| `Makefile` | `vbash-self` / `vbash-self-detail` / `vbash-run` |
+
+### 基准结果（`make vbash-self`）
+
+| 层 | 通过率 | 门槛 | 结论 |
+|---|---|---|---|
+| T0 | 20/20 = 100% | 100% | ✅ |
+| T1 | 35/36 = 97.2% | 100% | 差 1 条 = 子 shell（S7） |
+| T2 | 32/32 = 100% | 95% | ✅ |
+| T3h | 20/20 = 100% | 90% | ✅ |
+| X | 30/30 = 100% | 100% | ✅ |
+| T3c | 6/25 = 24% | 0（S7 前） | 符合预期 |
+| C | 29/30 = 96.7% | 100% | 差 1 条 = `for` 打表（S7） |
+
+合计 **172/193**。
+
+### 实现要点
+
+- **失败语义按用户决策**：`( )`、`{ }`、函数定义已能解析但**报「暂不支持执行」**（`诊断 + 退出码 1`），
+  不静默执行错误语义。因此 `T1/017`（子 shell 隔离 `cd`）在 S7 之前不会通过。
+- **诊断文案对齐 bash**：基准逐字节比对 stderr，故文案必须精确。已核对并复刻：
+  `cd: X: No such file or directory` / `Not a directory`、`X: command not found`、
+  `X: Is a directory` / `Permission denied`、`syntax error near unexpected token \`;'` +
+  `` `;' ``、`unexpected EOF while looking for matching \`''`、
+  `warning: here-document at line N delimited by end-of-file (wanted \`EOF')`、
+  `<signal> <command>`（信号退出）。**shell 名前缀**由 `Config.ShellName` 注入，
+  基准里取 `/bin/bash`（bash 用 `argv[0]` 作前缀）。
+- **`cd` 的显示名**：诊断用用户**输入的**路径，不用拼接后的绝对路径（`cd nope` 而非 `cd /abs/nope`）。
+- **管道并发安全**：每个管道段跑在自己的 `Env` 克隆里，否则 `-race` 会报数据竞争。
+- **赋值右侧的展开**：不走字段切分（`X="a  b"` 保留空格），且 `$(...)` 的退出状态传递给 `$?`。
+- **`printf`**：自实现格式化（`%s %d %i %u %o %x %X %c %b %q`、宽度/精度/`-`/`0`），
+  格式串里的 `\n \t \r \a \b \f \v \e \\ \0NNN \xHH` 全部解释。
+- **模式匹配**：`path.Match` 的 `*` 不跨 `/`，而 bash 的 `${F##*/}` 必须跨，故自写 `match.go`
+  （`*` `?` `[abc]` `[a-z]` `[!...]` `\` 转义）。
+
+### 与规划的偏差与自定决策
+
+| # | 情况 | 处理 | 理由 |
+|---|---|---|---|
+| S3-1 | 规划 §6 把执行层放在 `tools/shell` 内驱动 | `vbash` 自带 `Runner`/`Config`/`RunScript`，`tools/shell` 只在 S8 接线 | 库分层要求 `vbash` 不依赖 `tools/shell`；自带执行器也让基准可直接跑（`vbashrun`） |
+| S3-2 | 规划未定义子 shell/分组/函数在 S7 前的行为 | 报「暂不支持执行」，退出码 1 | 用户明确决策；符合 D9「不回落、不静默」 |
+| S3-3 | `wait` 在规划 §3.4 写「报错」 | 实现为无害内建（返回 0） | 语料里 `& wait` 是常见写法（`T1/031`），报错会让整条命令失败且无收益 |
+| S3-4 | `${...}` 里 `#` 既可能是长度也可能是前缀删除 | `parseBraced` 先判 `${#name}` 纯名字形式为长度，其余按 `#`/`##` 删前缀 | 两者语法重叠，靠「`#` 之后是否仍是一个纯名字」区分 |
+| S3-5 | 重定向打开失败如何终止 | 打诊断 + 该命令退出码 1，**不中断脚本** | 与 bash 一致（`echo x > nodir/f; echo rc=$?` 后续仍执行） |
+| S3-6 | 信号退出诊断 | 输出 `<Signal> <command>`（`%-26s`） | 复刻 bash 的作业控制提示行 |
+
+### 验收
+
+- `go build ./... && go vet ./... && go test ./... && go test -race ./...` 全绿；`make cross` OK
+- `make vbash-self`：**172/193**（T0=100、T2=100、T3h=100、X=100、T1=97.2、C=96.7、T3c=24）
+- 未达 100% 的三条全部是控制流/子 shell，属 S7 范围
+
 ## S2 解析层（2026-11-04）
 
 ### 产出

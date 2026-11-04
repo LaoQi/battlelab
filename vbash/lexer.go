@@ -10,6 +10,7 @@ type lexer struct {
 	line         int
 	col          int
 	pending      []*Heredoc
+	unterminated []UnterminatedHeredoc
 	pendingStart bool
 	expectDelim  *delimExpect
 }
@@ -382,6 +383,28 @@ func (l *lexer) readWord(start Pos) (Token, error) {
 	}, nil
 }
 
+func lexWordSegments(text string) ([]Segment, error) {
+	if text == "" {
+		return nil, nil
+	}
+	l := newLexer(text)
+	tok, err := l.Next()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Kind != TokWord {
+		return []Segment{{Kind: SegLiteral, Text: text, Mode: ModeUnquoted}}, nil
+	}
+	segs := tok.Segments()
+	if rest, err := l.Next(); err == nil && rest.Kind != TokEOF {
+		var out []Segment
+		out = append(out, segs...)
+		out = append(out, Segment{Kind: SegLiteral, Text: " " + rest.Text, Mode: ModeUnquoted})
+		return out, nil
+	}
+	return segs, nil
+}
+
 func compactSegments(segs []Segment) []Segment {
 	out := make([]Segment, 0, len(segs))
 	for _, seg := range segs {
@@ -571,7 +594,7 @@ func (l *lexer) readSingleQuoted(w *wordBuilder) error {
 		}
 		w.literalRune(r)
 	}
-	return &SyntaxError{Msg: "单引号未闭合", Pos: start}
+	return &SyntaxError{Msg: "单引号未闭合", EOF: true, Pos: start}
 }
 
 func (l *lexer) readDoubleQuoted(w *wordBuilder) error {
@@ -617,7 +640,7 @@ func (l *lexer) readDoubleQuoted(w *wordBuilder) error {
 			w.literalRune(r)
 		}
 	}
-	return &SyntaxError{Msg: "双引号未闭合", Pos: start}
+	return &SyntaxError{Msg: "双引号未闭合", EOF: true, Pos: start}
 }
 
 func (l *lexer) readAnsiCQuoted(w *wordBuilder) error {
@@ -664,7 +687,7 @@ func (l *lexer) readAnsiCQuoted(w *wordBuilder) error {
 			w.literalRune(e)
 		}
 	}
-	return &SyntaxError{Msg: "$'...' 未闭合", Pos: start}
+	return &SyntaxError{Msg: "$'...' 未闭合", EOF: true, Pos: start}
 }
 
 func (l *lexer) readHeredocDelim(exp *delimExpect) (Token, error) {
@@ -697,6 +720,10 @@ func (l *lexer) finishHeredocs() {
 	}
 }
 
+func (l *lexer) unterminatedHeredocs() []UnterminatedHeredoc {
+	return l.unterminated
+}
+
 func (l *lexer) readHeredocBodies() (Token, error) {
 	h := l.readHeredocBody()
 	if h == nil {
@@ -718,6 +745,7 @@ func (l *lexer) readHeredocBody() *Heredoc {
 		l.advance()
 	}
 	var body strings.Builder
+	closed := false
 	for {
 		if l.eof() {
 			break
@@ -735,6 +763,7 @@ func (l *lexer) readHeredocBody() *Heredoc {
 			cmp = strings.TrimLeft(cmp, "\t")
 		}
 		if cmp == h.Delim {
+			closed = true
 			break
 		}
 		if h.StripTabs {
@@ -746,6 +775,16 @@ func (l *lexer) readHeredocBody() *Heredoc {
 			body.WriteString("\n")
 		}
 	}
+	if !closed && body.Len() > 0 {
+		body.WriteString("\n")
+	}
 	h.Body = body.String()
+	if !closed {
+		l.unterminated = append(l.unterminated, UnterminatedHeredoc{
+			Wanted:  h.Delim,
+			Line:    h.Pos.Line,
+			EndLine: l.line,
+		})
+	}
 	return h
 }

@@ -1,3 +1,16 @@
+## 2026-11-04 feat(vbash): S3–S6 执行层、展开、重定向与跨平台诊断
+
+- **执行器**（`vbash/runner.go`）：列表 / `&&`、`||` 短路 / 管道（各段独立 `Env` 克隆，`-race` 干净）/ 命令 / 重定向套用；`RunScript` + `Config` 自带入口，不依赖 `tools/shell`
+- **变量与展开**（`vbash/env.go`、`expand.go`、`arith.go`）：位置参数与 `$? $# $@ $* $$ $0 $1`；`$VAR` 贪婪取名；`"$@"` 展开成多词；IFS 字段切分（`"$X"` 不切、`$X` 切）；`${#V} ${V:-x} ${V:=x} ${V:?x} ${V:+x} ${V##p} ${V%%p} ${V/p/r} ${V//p/r}`；`$(( ))` 完整求值（优先级/赋值/三元/进制）；`~/` 展开；glob（无匹配保字面）
+- **重定向**（`vbash/redirect.go`）：`> >> < 2> 2>> 2>&1 &> &>> >| <>`，**保序**（`2>&1 >f` ≠ `>f 2>&1`），heredoc 体按「终止符是否引号化」决定是否展开，`/dev/null` 走内部汇
+- **内建**（`vbash/builtin.go`、`test.go`）：`:` `true` `false` `echo` `printf` `cd` `pwd` `export` `unset` `set` `shift` `exit` `return` `read` `wait` `test`/`[`；`printf` 自实现格式化与转义（含 `\0NNN`、`\xHH`）；`cd` 维护 `PWD`/`OLDPWD` 与 `cd -`
+- **外部透传与退出码**（`vbash/exec.go`）：`$PATH` 查找、126/127/128+signum、`argv[0]` 原样传递、信号退出复刻 `<Signal> <command>` 提示
+- **诊断文案对齐 bash**（`vbash/diag.go`）：基准逐字节比对 stderr，故 `cd:` / `command not found` / `Is a directory` / `syntax error near unexpected token` / `unexpected EOF while looking for matching` / heredoc 未闭合告警全部复刻；shell 名前缀由 `Config.ShellName` 注入（基准取 `/bin/bash`）
+- **失败语义**：`( )`、`{ }`、函数定义能解析但**报「暂不支持执行」**（用户决策，符合 D9 不回落），故 `T1/017` 在 S7 前不通过
+- **基准适配器** `vbash/testdata/cmd/vbashrun` + `make vbash-self` / `vbash-self-detail` / `vbash-run`
+- **实测**：`make vbash-self` **172/193** —— T0=100%、T1=97.2%、T2=100%、T3h=100%、X=100%、T3c=24%、C=96.7%；未达标的三条全属控制流/子 shell（S7 范围）。`go build`/`vet`/`test`/`test -race`/`make cross` 全绿
+- **文档**：`docs/vbash-impl.md` 新增 S3 节（产物、基准矩阵、实现要点、偏差 S3-1…S3-6）
+
 ## 2026-11-04 feat(vbash): S2 解析层——列表/管道/重定向/heredoc 挂载与展开片段
 
 - **`vbash/ast.go`**（新）：AST —— `List`/`ListItem`（分隔符 + 是否换行）/`AndOr`/`PipeItem`/`Pipeline`（含 `!`）/`Command`（赋值 / 词 / 重定向 / 分组 / 函数定义）/`Assign`/`Redirect`（`Fd` 默认 -1）/`Word`（`Segments` + 拼接后的 `Text`）/`Segment`
