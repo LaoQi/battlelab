@@ -9,9 +9,14 @@ type lexer struct {
 	i            int
 	line         int
 	col          int
-	pending      []Heredoc
-	heredocs     []Heredoc
+	pending      []*Heredoc
 	pendingStart bool
+	expectDelim  *delimExpect
+}
+
+type delimExpect struct {
+	stripTabs bool
+	opPos     Pos
 }
 
 func newLexer(src string) *lexer {
@@ -59,6 +64,22 @@ func (l *lexer) advance() rune {
 	return r
 }
 
+func (l *lexer) unread() {
+	if l.i == 0 {
+		return
+	}
+	l.i--
+	if l.src[l.i] == '\n' {
+		l.line--
+		l.col = 1
+		for j := l.i - 1; j >= 0 && l.src[j] != '\n'; j-- {
+			l.col++
+		}
+	} else {
+		l.col--
+	}
+}
+
 func isBlank(r rune) bool { return r == ' ' || r == '\t' }
 
 func isMeta(r rune) bool {
@@ -85,13 +106,18 @@ func (l *lexer) skipBlanks() {
 }
 
 func (l *lexer) Next() (Token, error) {
+	if l.expectDelim != nil {
+		exp := l.expectDelim
+		l.expectDelim = nil
+		return l.readHeredocDelim(exp)
+	}
 	if l.pendingStart {
 		l.pendingStart = false
 		return l.readHeredocBodies()
 	}
 	l.skipBlanks()
 	if l.eof() {
-		return Token{Kind: TokEOF, Pos: l.pos()}, nil
+		return Token{Kind: TokEOF, Pos: l.pos(), End: l.pos()}, nil
 	}
 	start := l.pos()
 	r := l.peek()
@@ -102,20 +128,22 @@ func (l *lexer) Next() (Token, error) {
 		if len(l.pending) > 0 {
 			l.pendingStart = true
 		}
-		return Token{Kind: TokNewline, Text: "\n", Pos: start}, nil
+		return Token{Kind: TokNewline, Text: "\n", Pos: start, End: l.pos()}, nil
 	case '#':
 		return l.readComment(start), nil
+	}
+
+	if construct, hint, ok := unsupportedOp(l.src[l.i:]); ok {
+		return Token{}, unsupported(construct, hint, start)
 	}
 
 	if op, n := matchOp(l.src[l.i:]); n > 0 {
 		for range n {
 			l.advance()
 		}
-		tok := Token{Kind: TokOp, Op: op, Pos: start}
+		tok := Token{Kind: TokOp, Op: op, Pos: start, End: l.pos()}
 		if op == OpDLess || op == OpDLessDash {
-			if err := l.registerHeredoc(op == OpDLessDash, start); err != nil {
-				return Token{}, err
-			}
+			l.expectDelim = &delimExpect{stripTabs: op == OpDLessDash, opPos: start}
 		}
 		return tok, nil
 	}
@@ -134,6 +162,7 @@ func matchOp(s []rune) (OpKind, int) {
 			if at(2, '&') {
 				return OpNone, 0
 			}
+			return OpDSemi, 2
 		}
 		return OpSemi, 1
 	case '&':
@@ -181,6 +210,8 @@ func matchOp(s []rune) (OpKind, int) {
 			return OpGreatAmp, 2
 		case at(1, '|'):
 			return OpClobber, 2
+		case at(1, '('):
+			return OpNone, 0
 		}
 		return OpGreat, 1
 	case '(':
@@ -194,17 +225,93 @@ func matchOp(s []rune) (OpKind, int) {
 	return OpNone, 0
 }
 
+type opPrefix struct {
+	Text      string
+	Construct string
+	Hint      string
+}
+
+var unsupportedOps = []opPrefix{
+	{";;&", "';;&' 分支结束符", "改用 ';;'"},
+	{";&", "';' '&' 分支结束符", "改用 ';;'"},
+	{"|&", "管道符号 '|&'（合并 stderr）", "改用 2>&1 |"},
+	{"<<<", "here-string '<<<'", "改用 << heredoc"},
+	{"<(", "进程替换 '<(...)'", "改用 $(...) 与临时文件"},
+	{">(", "进程替换 '>(...)'", "改用 $(...) 与临时文件"},
+	{"((", "算术命令 '((...))'", "改用 $((...)) 展开"},
+}
+
+func unsupportedOp(s []rune) (string, string, bool) {
+	n := len(s)
+	if n > 3 {
+		n = 3
+	}
+	prefix := string(s[:n])
+	for _, p := range unsupportedOps {
+		if strings.HasPrefix(prefix, p.Text) {
+			return p.Construct, p.Hint, true
+		}
+	}
+	return "", "", false
+}
+
 func (l *lexer) readComment(start Pos) Token {
 	l.advance()
 	var b strings.Builder
 	for !l.eof() && l.peek() != '\n' {
 		b.WriteRune(l.advance())
 	}
-	return Token{Kind: TokComment, Text: b.String(), Pos: start}
+	return Token{Kind: TokComment, Text: b.String(), Pos: start, End: l.pos()}
+}
+
+type wordBuilder struct {
+	text strings.Builder
+	segs []Segment
+	mode WordMode
+	pos  Pos
+}
+
+func newWordBuilder(mode WordMode, pos Pos) *wordBuilder {
+	return &wordBuilder{mode: mode, pos: pos}
+}
+
+func (w *wordBuilder) setMode(m WordMode, pos Pos) {
+	w.mode = m
+	w.pos = pos
+}
+
+func (w *wordBuilder) literal(s string) {
+	if s == "" {
+		return
+	}
+	w.text.WriteString(s)
+	if n := len(w.segs); n > 0 && w.segs[n-1].Kind == SegLiteral && w.segs[n-1].Mode == w.mode {
+		w.segs[n-1].Text += s
+		return
+	}
+	w.segs = append(w.segs, Segment{Kind: SegLiteral, Text: s, Mode: w.mode, Pos: w.pos})
+}
+
+func (w *wordBuilder) literalRune(r rune) { w.literal(string(r)) }
+
+func (w *wordBuilder) segment(kind SegmentKind, text, inner string, pos Pos) {
+	w.text.WriteString(text)
+	w.segs = append(w.segs, Segment{Kind: kind, Text: text, Inner: inner, Mode: w.mode, Pos: pos})
+}
+
+func (w *wordBuilder) mark() {
+	if n := len(w.segs); n > 0 && w.segs[n-1].Mode == w.mode && w.segs[n-1].Kind == SegLiteral {
+		return
+	}
+	w.segs = append(w.segs, Segment{Kind: SegLiteral, Mode: w.mode, Pos: w.pos})
+}
+
+func (w *wordBuilder) finish() []Segment {
+	return compactSegments(w.segs)
 }
 
 func (l *lexer) readWord(start Pos) (Token, error) {
-	var b strings.Builder
+	w := newWordBuilder(ModeUnquoted, start)
 	quoted := false
 	for !l.eof() {
 		r := l.peek()
@@ -214,72 +321,260 @@ func (l *lexer) readWord(start Pos) (Token, error) {
 		switch r {
 		case '\\':
 			l.advance()
+			pos := l.pos()
 			if l.eof() {
-				break
+				w.setMode(ModeLiteral, pos)
+				w.literalRune('\\')
+				w.setMode(ModeUnquoted, pos)
+				quoted = true
+				continue
 			}
 			if l.peek() == '\n' {
 				l.advance()
 				continue
 			}
-			b.WriteRune(l.advance())
+			c := l.advance()
+			w.setMode(ModeLiteral, pos)
+			w.literalRune(c)
+			w.setMode(ModeUnquoted, l.pos())
 			quoted = true
 		case '\'':
 			quoted = true
 			l.advance()
-			if err := l.readSingleQuoted(&b); err != nil {
+			l.beginQuoted(w, ModeLiteral)
+			if err := l.readSingleQuoted(w); err != nil {
 				return Token{}, err
 			}
+			w.setMode(ModeUnquoted, l.pos())
 		case '"':
 			quoted = true
 			l.advance()
-			if err := l.readDoubleQuoted(&b); err != nil {
+			l.beginQuoted(w, ModeDoubleQuoted)
+			if err := l.readDoubleQuoted(w); err != nil {
 				return Token{}, err
 			}
+			w.setMode(ModeUnquoted, l.pos())
 		case '$':
-			if l.peekAt(1) == '\'' {
-				quoted = true
-				l.advance()
-				l.advance()
-				if err := l.readAnsiCQuoted(&b); err != nil {
-					return Token{}, err
-				}
+			expanded, err := l.readDollar(w)
+			if err != nil {
+				return Token{}, err
+			}
+			if expanded {
 				continue
 			}
-			if l.peekAt(1) == '(' && l.peekAt(2) == '(' {
-				if err := l.readArithExpansion(&b); err != nil {
-					return Token{}, err
-				}
-				continue
-			}
-			if l.peekAt(1) == '(' {
-				if err := l.readCmdSubstitution(&b); err != nil {
-					return Token{}, err
-				}
-				continue
-			}
-			b.WriteRune(l.advance())
+			l.advance()
+			w.literal("$")
 		case '`':
 			return Token{}, unsupported("反引号命令替换", "改用 $(...)", l.pos())
 		default:
-			b.WriteRune(l.advance())
+			l.advance()
+			w.literalRune(r)
 		}
 	}
-	return Token{Kind: TokWord, Text: b.String(), Pos: start, Quoted: quoted}, nil
+	w.mark()
+	return Token{
+		Kind:   TokWord,
+		Text:   w.text.String(),
+		Pos:    start,
+		End:    l.pos(),
+		Quoted: quoted,
+		segs:   w.finish(),
+	}, nil
 }
 
-func (l *lexer) readSingleQuoted(b *strings.Builder) error {
+func compactSegments(segs []Segment) []Segment {
+	out := make([]Segment, 0, len(segs))
+	for _, seg := range segs {
+		if seg.Kind == SegLiteral && seg.Text == "" {
+			continue
+		}
+		if n := len(out); n > 0 && out[n-1].Kind == SegLiteral && seg.Kind == SegLiteral && out[n-1].Mode == seg.Mode {
+			out[n-1].Text += seg.Text
+			continue
+		}
+		out = append(out, seg)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (l *lexer) beginQuoted(w *wordBuilder, mode WordMode) {
+	pos := l.pos()
+	w.setMode(mode, pos)
+	w.mark()
+}
+
+func (l *lexer) readDollar(w *wordBuilder) (bool, error) {
+	pos := l.pos()
+	n1 := l.peekAt(1)
+	switch {
+	case n1 == '\'' && w.mode != ModeDoubleQuoted:
+		l.advance()
+		l.advance()
+		w.setMode(ModeLiteral, l.pos())
+		w.mark()
+		if err := l.readAnsiCQuoted(w); err != nil {
+			return false, err
+		}
+		w.setMode(ModeUnquoted, l.pos())
+		return true, nil
+	case n1 == '(' && l.peekAt(2) == '(':
+		return true, l.readArith(w, pos)
+	case n1 == '(':
+		return true, l.readCmdSub(w, pos)
+	case n1 == '{':
+		return true, l.readBraced(w, pos)
+	case isNameStart(n1):
+		l.advance()
+		var b strings.Builder
+		for !l.eof() && isNameRune(l.peek()) {
+			b.WriteRune(l.advance())
+		}
+		name := b.String()
+		w.segment(SegVar, "$"+name, name, pos)
+		return true, nil
+	case isSpecialParam(n1):
+		l.advance()
+		c := l.advance()
+		w.segment(SegVar, "$"+string(c), string(c), pos)
+		return true, nil
+	}
+	return false, nil
+}
+
+func isNameStart(r rune) bool {
+	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+func isNameRune(r rune) bool { return isNameStart(r) || (r >= '0' && r <= '9') }
+
+func isSpecialParam(r rune) bool {
+	switch r {
+	case '?', '#', '@', '*', '$', '!', '-':
+		return true
+	}
+	return r >= '0' && r <= '9'
+}
+
+func (l *lexer) readArith(w *wordBuilder, pos Pos) error {
+	start := l.pos()
+	l.advance()
+	l.advance()
+	l.advance()
+	var b strings.Builder
+	depth := 0
+	for !l.eof() {
+		r := l.advance()
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 && l.peek() == ')' {
+				l.advance()
+				inner := b.String()
+				w.segment(SegArith, "$(("+inner+"))", inner, pos)
+				return nil
+			}
+			depth--
+		case '\\':
+			b.WriteRune(r)
+			if !l.eof() {
+				b.WriteRune(l.advance())
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return &SyntaxError{Msg: "$(( 未闭合", Pos: start}
+}
+
+func (l *lexer) readCmdSub(w *wordBuilder, pos Pos) error {
+	start := l.pos()
+	l.advance()
+	l.advance()
+	var b strings.Builder
+	depth := 0
+	quote := rune(0)
+	for !l.eof() {
+		r := l.advance()
+		if quote != 0 {
+			b.WriteRune(r)
+			if r == quote {
+				quote = 0
+			} else if r == '\\' && quote == '"' && !l.eof() {
+				b.WriteRune(l.advance())
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				inner := b.String()
+				w.segment(SegCmdSub, "$("+inner+")", inner, pos)
+				return nil
+			}
+			depth--
+		case '\\':
+			b.WriteRune(r)
+			if !l.eof() {
+				b.WriteRune(l.advance())
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return &SyntaxError{Msg: "$( 未闭合", Pos: start}
+}
+
+func (l *lexer) readBraced(w *wordBuilder, pos Pos) error {
+	start := l.pos()
+	l.advance()
+	l.advance()
+	var b strings.Builder
+	depth := 0
+	for !l.eof() {
+		r := l.advance()
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 {
+				inner := b.String()
+				w.segment(SegBraced, "${"+inner+"}", inner, pos)
+				return nil
+			}
+			depth--
+		case '\\':
+			b.WriteRune(r)
+			if !l.eof() {
+				b.WriteRune(l.advance())
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return &SyntaxError{Msg: "${ 未闭合", Pos: start}
+}
+
+func (l *lexer) readSingleQuoted(w *wordBuilder) error {
 	start := l.pos()
 	for !l.eof() {
 		r := l.advance()
 		if r == '\'' {
 			return nil
 		}
-		b.WriteRune(r)
+		w.literalRune(r)
 	}
 	return &SyntaxError{Msg: "单引号未闭合", Pos: start}
 }
 
-func (l *lexer) readDoubleQuoted(b *strings.Builder) error {
+func (l *lexer) readDoubleQuoted(w *wordBuilder) error {
 	start := l.pos()
 	for !l.eof() {
 		r := l.advance()
@@ -287,29 +582,45 @@ func (l *lexer) readDoubleQuoted(b *strings.Builder) error {
 		case '"':
 			return nil
 		case '\\':
+			pos := l.pos()
 			if l.eof() {
-				b.WriteRune('\\')
-				break
+				w.setMode(ModeLiteral, pos)
+				w.literalRune('\\')
+				w.setMode(ModeDoubleQuoted, pos)
+				continue
 			}
 			n := l.peek()
 			switch n {
 			case '$', '`', '"', '\\':
-				b.WriteRune(l.advance())
+				l.advance()
+				w.setMode(ModeLiteral, pos)
+				w.literalRune(n)
+				w.setMode(ModeDoubleQuoted, l.pos())
 			case '\n':
 				l.advance()
 			default:
-				b.WriteRune('\\')
+				w.literalRune('\\')
 			}
 		case '`':
 			return unsupported("反引号命令替换", "改用 $(...)", l.pos())
+		case '$':
+			l.unread()
+			expanded, err := l.readDollar(w)
+			if err != nil {
+				return err
+			}
+			if !expanded {
+				l.advance()
+				w.literalRune('$')
+			}
 		default:
-			b.WriteRune(r)
+			w.literalRune(r)
 		}
 	}
 	return &SyntaxError{Msg: "双引号未闭合", Pos: start}
 }
 
-func (l *lexer) readAnsiCQuoted(b *strings.Builder) error {
+func (l *lexer) readAnsiCQuoted(w *wordBuilder) error {
 	start := l.pos()
 	for !l.eof() {
 		r := l.advance()
@@ -317,106 +628,90 @@ func (l *lexer) readAnsiCQuoted(b *strings.Builder) error {
 			return nil
 		}
 		if r != '\\' {
-			b.WriteRune(r)
+			w.literalRune(r)
 			continue
 		}
 		if l.eof() {
-			b.WriteRune('\\')
+			w.literalRune('\\')
 			break
 		}
 		e := l.advance()
 		switch e {
 		case 'n':
-			b.WriteRune('\n')
+			w.literalRune('\n')
 		case 't':
-			b.WriteRune('\t')
+			w.literalRune('\t')
 		case 'r':
-			b.WriteRune('\r')
+			w.literalRune('\r')
 		case 'a':
-			b.WriteRune('\a')
+			w.literalRune('\a')
 		case 'b':
-			b.WriteRune('\b')
+			w.literalRune('\b')
 		case 'f':
-			b.WriteRune('\f')
+			w.literalRune('\f')
 		case 'v':
-			b.WriteRune('\v')
+			w.literalRune('\v')
 		case '\\':
-			b.WriteRune('\\')
+			w.literalRune('\\')
 		case '\'':
-			b.WriteRune('\'')
+			w.literalRune('\'')
 		case '"':
-			b.WriteRune('"')
+			w.literalRune('"')
 		case 'e', 'E':
-			b.WriteRune(0x1b)
+			w.literalRune(0x1b)
 		default:
-			b.WriteRune('\\')
-			b.WriteRune(e)
+			w.literalRune('\\')
+			w.literalRune(e)
 		}
 	}
 	return &SyntaxError{Msg: "$'...' 未闭合", Pos: start}
 }
 
-func (l *lexer) registerHeredoc(stripTabs bool, opPos Pos) error {
+func (l *lexer) readHeredocDelim(exp *delimExpect) (Token, error) {
 	l.skipBlanks()
-	if l.eof() {
-		return &SyntaxError{Msg: "heredoc 缺少终止符", Pos: opPos}
+	if l.eof() || l.peek() == '\n' {
+		return Token{}, &SyntaxError{Msg: "heredoc 缺少终止符", Pos: exp.opPos}
 	}
 	start := l.pos()
-	var delim strings.Builder
-	expand := true
-	quotedDelim := false
-	for !l.eof() {
-		r := l.peek()
-		if isBlank(r) || r == '\n' || r == ';' || r == '&' || r == '|' || r == '<' || r == '>' {
-			break
-		}
-		switch r {
-		case '\'':
-			quotedDelim = true
-			l.advance()
-			for !l.eof() {
-				c := l.advance()
-				if c == '\'' {
-					break
-				}
-				delim.WriteRune(c)
-			}
-		case '"':
-			quotedDelim = true
-			l.advance()
-			for !l.eof() {
-				c := l.advance()
-				if c == '"' {
-					break
-				}
-				delim.WriteRune(c)
-			}
-		case '\\':
-			quotedDelim = true
-			l.advance()
-			if !l.eof() {
-				delim.WriteRune(l.advance())
-			}
-		default:
-			delim.WriteRune(l.advance())
-		}
+	tok, err := l.readWord(start)
+	if err != nil {
+		return Token{}, err
 	}
-	if delim.Len() == 0 {
-		return &SyntaxError{Msg: "heredoc 缺少终止符", Pos: start}
+	if tok.Text == "" {
+		return Token{}, &SyntaxError{Msg: "heredoc 缺少终止符", Pos: start}
 	}
-	if quotedDelim {
-		expand = false
-	}
-	l.pending = append(l.pending, Heredoc{
-		Delim:      delim.String(),
-		StripTabs:  stripTabs,
-		ExpandBody: expand,
+	h := &Heredoc{
+		Delim:      tok.Text,
+		StripTabs:  exp.stripTabs,
+		ExpandBody: !tok.Quoted,
 		Pos:        start,
-	})
-	return nil
+	}
+	l.pending = append(l.pending, h)
+	tok.Heredocs = []*Heredoc{h}
+	return tok, nil
+}
+
+func (l *lexer) finishHeredocs() {
+	for len(l.pending) > 0 {
+		l.readHeredocBody()
+	}
 }
 
 func (l *lexer) readHeredocBodies() (Token, error) {
+	h := l.readHeredocBody()
+	if h == nil {
+		return Token{Kind: TokEOF, Pos: l.pos(), End: l.pos()}, nil
+	}
+	if len(l.pending) > 0 {
+		l.pendingStart = true
+	}
+	return Token{Kind: TokHeredocBody, Text: h.Body, Pos: h.Pos, End: l.pos(), Heredocs: []*Heredoc{h}}, nil
+}
+
+func (l *lexer) readHeredocBody() *Heredoc {
+	if len(l.pending) == 0 {
+		return nil
+	}
 	h := l.pending[0]
 	l.pending = l.pending[1:]
 	if !l.eof() && l.peek() == '\n' {
@@ -452,69 +747,5 @@ func (l *lexer) readHeredocBodies() (Token, error) {
 		}
 	}
 	h.Body = body.String()
-	l.heredocs = append(l.heredocs, h)
-	if len(l.pending) > 0 {
-		l.pendingStart = true
-	}
-	return Token{Kind: TokHeredocBody, Text: h.Body, Pos: h.Pos, Heredocs: []Heredoc{h}}, nil
-}
-
-func (l *lexer) readArithExpansion(b *strings.Builder) error {
-	start := l.pos()
-	b.WriteString("$((")
-	l.advance()
-	l.advance()
-	l.advance()
-	depth := 0
-	for !l.eof() {
-		r := l.advance()
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 && l.peek() == ')' {
-				l.advance()
-				b.WriteString("))")
-				return nil
-			}
-			depth--
-		case '\\':
-			b.WriteRune(r)
-			if !l.eof() {
-				b.WriteRune(l.advance())
-			}
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return &SyntaxError{Msg: "$(( 未闭合", Pos: start}
-}
-
-func (l *lexer) readCmdSubstitution(b *strings.Builder) error {
-	start := l.pos()
-	b.WriteString("$(")
-	l.advance()
-	l.advance()
-	depth := 0
-	for !l.eof() {
-		r := l.advance()
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 {
-				b.WriteRune(')')
-				return nil
-			}
-			depth--
-		case '\\':
-			b.WriteRune(r)
-			if !l.eof() {
-				b.WriteRune(l.advance())
-			}
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return &SyntaxError{Msg: "$( 未闭合", Pos: start}
+	return h
 }

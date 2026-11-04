@@ -66,3 +66,41 @@ func TestCorpusLexes(t *testing.T) {
 	}
 	t.Logf("共扫描 %d 条用例：按设计不支持 %d 条，按预期语法错误 %d 条", len(cases), unsupported, malformed)
 }
+
+func parseOne(cmd string) error {
+	list, err := Parse(cmd)
+	if err != nil {
+		return err
+	}
+	return checkTree(list)
+}
+
+func TestCorpusParses(t *testing.T) {
+	cases := loadBenchCommands(t)
+	if len(cases) == 0 {
+		t.Fatal("语料清单为空")
+	}
+	var okCount, unsupported, malformed int
+	for _, c := range cases {
+		err := parseOne(c.Command)
+		if err == nil {
+			okCount++
+			continue
+		}
+		var ue *UnsupportedError
+		if errors.As(err, &ue) {
+			unsupported++
+			t.Logf("按设计不支持 %s: %v", c.Name, err)
+			continue
+		}
+		var se *SyntaxError
+		if errors.As(err, &se) {
+			malformed++
+			t.Logf("按预期语法错误 %s: %v", c.Name, err)
+			continue
+		}
+		t.Errorf("%s 解析失败: %v（命令 %q）", c.Name, err, c.Command)
+	}
+	t.Logf("共扫描 %d 条用例：解析成功 %d 条，按设计不支持 %d 条，按预期语法错误 %d 条",
+		len(cases), okCount, unsupported, malformed)
+}

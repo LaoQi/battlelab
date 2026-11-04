@@ -1,3 +1,15 @@
+## 2026-11-04 feat(vbash): S2 解析层——列表/管道/重定向/heredoc 挂载与展开片段
+
+- **`vbash/ast.go`**（新）：AST —— `List`/`ListItem`（分隔符 + 是否换行）/`AndOr`/`PipeItem`/`Pipeline`（含 `!`）/`Command`（赋值 / 词 / 重定向 / 分组 / 函数定义）/`Assign`/`Redirect`（`Fd` 默认 -1）/`Word`（`Segments` + 拼接后的 `Text`）/`Segment`
+- **`vbash/parser.go`**（新）：递归下降解析器，四层语法 `List → AndOr → Pipeline → Command`，外加子 shell `( )`、花括号分组 `{ ; }`、函数定义 `name() { …; }`
+- **fd 重定向识别**：只有「纯数字 Word」与重定向操作符**无空白相邻**且未被引号包裹时才作 fd（`2>f` 是 fd、`2 >f` 与 `"2">f` 是参数），三种写法均用真 bash 核对；`Redirs` 保序，`2>&1 >f` ≠ `>f 2>&1`
+- **heredoc 关联**：词法层改为把 `<<` 分隔符作为普通 Word 返回并携带 `*Heredoc`，解析层把同一指针挂到 `Redirect.Heredoc`；体在脚本解析结束时统一补齐，故「终止符后接命令」「管道中的 heredoc」都正确
+- **展开片段结构化**（把 S5 的语义前移出词法器）：`Segment` 分字面/`$VAR`/`${…}`/`$((…))`/`$(…)` 五类，带「未引用/双引号内/字面」三种引号模式；`$(…)` 内层文本递归解析为 `Segment.Sub`。`$Xdef` 贪婪取名、单引号内不展开、双引号内 `$'…'` 是字面——均按 bash 行为
+- **报错口径**：`if`/`for`/`while`/`until`/`case`/`function`/`coproc`/`time` 在首词位置报 `UnsupportedError`（带规划文档提示），闭合词 `fi`/`then`/`done`/`esac` 与 `;`/`|`/`&&` 打头报 `SyntaxError`；`[[` 提示改用 `[ ]`
+- **修词法层死循环隐患**：`; ;&`、`|&`、`<<<`、`<(`/`>(`、`((` 原先落到 `matchOp` 返回 `(OpNone, 0)` 而调用方不消费字符 → 原地死循环；现新增前缀表 `unsupportedOps` 直接报 `UnsupportedError`；`;;` 单独成为 `OpDSemi`
+- **回归**：192 条基准命令 **168 条解析成功** / 18 条按设计不支持 / 6 条按预期语法错误，**与 `bash -n` 的语法错判定集合完全一致**；新增随机片段回归（不 panic、不死循环、AST 无空节点）；`go build`/`go vet`/`go test`/`go test -race`/`make cross` 全绿，`make vbash-check` 仍 193/193（未触碰 `tools/shell`）
+- **文档**：`docs/vbash-impl.md` 新增 S2 节（产物、语法层次、实现要点、偏差 S2-1…S2-6、验收）
+
 ## 2026-11-04 docs(vbash): 特性范围与实施规划 + 基准分层改造
 
 - **`docs/vbash-plan.md`**（新）：把语料分析落成决策。**目标定为跨平台用法一致性**，不定位为性能优化（实测 `bash -c` 基线 1.7–3.9 ms/次，全量 52 秒可忽略）；**边界是一阶段只虚拟 bash 解释器、外部程序一律透传**（不复刻 coreutils 方言，且 Windows 侧 coreutils 可用）
