@@ -1,3 +1,14 @@
+## 2026-11-04 fix(vbash): 大词解析从 O(n²) 降为 O(n)
+
+- **症状**：`wordBuilder.literal` 对尾部字面量逐字符 `Text += s`，字符串每轮整段复制，
+  单个大词呈二次增长——实测 200KB 字面量解析耗时 5.9s，400KB 需约 27s（改动前基线同样如此）
+- **`vbash/lexer.go`**：`wordBuilder` 增加待定字面量缓冲（`lit`/`litMode`/`litPos`/`litOpen`），
+  字面量累积进 `strings.Builder`，遇到非字面量片段（`segment`/`mark`）或收尾时一次性回填 `segs`；
+  `literalRune` 改为直接 `WriteRune`，不再每次 `string(r)` 分配
+- **效果**：200KB 字面量解析 5.9s → 4ms（约 1400 倍）；基准 193/193 与全部单测零变化
+- **`vbash/nestdepth_test.go`**：新增 `TestParseLargeLiteralLinear`，用 25KB/200KB 两档耗时比值
+  （阈值 40 倍，正常约 2 倍）守住线性复杂度，回归时会明确报出倍率
+
 ## 2026-11-04 fix(vbash): 嵌套深度上限，堵住深层括号 `$()`/`${}`/`$(( ))` 撑爆内存
 
 - **症状**：深层嵌套 `$( $( $( ... ) ) )` 会让 lexer 逐层复制内层文本（O(n²)）且无任何深度上限，

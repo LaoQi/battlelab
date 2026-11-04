@@ -85,3 +85,27 @@ func TestNestDepthNoMemoryBlowup(t *testing.T) {
 		t.Errorf("深层嵌套耗时 %v，疑似退化", d)
 	}
 }
+
+func TestParseLargeLiteralLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过耗时用例")
+	}
+	small := 25 * 1000
+	large := 200 * 1000
+	elapsed := func(n int) time.Duration {
+		src := "echo " + strings.Repeat("a", n)
+		start := time.Now()
+		if _, err := Parse(src); err != nil {
+			t.Fatalf("解析 %d 字节字面量失败: %v", n, err)
+		}
+		return time.Since(start)
+	}
+	smallD := elapsed(small)
+	largeD := elapsed(large)
+	if smallD < time.Millisecond {
+		smallD = time.Millisecond
+	}
+	if factor := float64(largeD) / float64(smallD); factor > 40 {
+		t.Errorf("字面量增长 8 倍耗时增长 %.1f 倍（%v → %v），疑似退化为 O(n²)", factor, smallD, largeD)
+	}
+}

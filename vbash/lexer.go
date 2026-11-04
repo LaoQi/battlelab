@@ -270,6 +270,11 @@ type wordBuilder struct {
 	segs []Segment
 	mode WordMode
 	pos  Pos
+
+	lit     strings.Builder
+	litMode WordMode
+	litPos  Pos
+	litOpen bool
 }
 
 func newWordBuilder(mode WordMode, pos Pos) *wordBuilder {
@@ -281,26 +286,56 @@ func (w *wordBuilder) setMode(m WordMode, pos Pos) {
 	w.pos = pos
 }
 
+func (w *wordBuilder) flushLiteral() {
+	if !w.litOpen {
+		return
+	}
+	text := w.lit.String()
+	w.lit.Reset()
+	w.litOpen = false
+	if text == "" {
+		return
+	}
+	if n := len(w.segs); n > 0 && w.segs[n-1].Kind == SegLiteral && w.segs[n-1].Mode == w.litMode {
+		w.segs[n-1].Text += text
+		return
+	}
+	w.segs = append(w.segs, Segment{Kind: SegLiteral, Text: text, Mode: w.litMode, Pos: w.litPos})
+}
+
 func (w *wordBuilder) literal(s string) {
 	if s == "" {
 		return
 	}
 	w.text.WriteString(s)
-	if n := len(w.segs); n > 0 && w.segs[n-1].Kind == SegLiteral && w.segs[n-1].Mode == w.mode {
-		w.segs[n-1].Text += s
-		return
+	if !w.litOpen || w.litMode != w.mode {
+		w.flushLiteral()
+		w.litMode = w.mode
+		w.litPos = w.pos
+		w.litOpen = true
 	}
-	w.segs = append(w.segs, Segment{Kind: SegLiteral, Text: s, Mode: w.mode, Pos: w.pos})
+	w.lit.WriteString(s)
 }
 
-func (w *wordBuilder) literalRune(r rune) { w.literal(string(r)) }
+func (w *wordBuilder) literalRune(r rune) {
+	w.text.WriteRune(r)
+	if !w.litOpen || w.litMode != w.mode {
+		w.flushLiteral()
+		w.litMode = w.mode
+		w.litPos = w.pos
+		w.litOpen = true
+	}
+	w.lit.WriteRune(r)
+}
 
 func (w *wordBuilder) segment(kind SegmentKind, text, inner string, pos Pos) {
+	w.flushLiteral()
 	w.text.WriteString(text)
 	w.segs = append(w.segs, Segment{Kind: kind, Text: text, Inner: inner, Mode: w.mode, Pos: pos})
 }
 
 func (w *wordBuilder) mark() {
+	w.flushLiteral()
 	if n := len(w.segs); n > 0 && w.segs[n-1].Mode == w.mode && w.segs[n-1].Kind == SegLiteral {
 		return
 	}
@@ -308,6 +343,7 @@ func (w *wordBuilder) mark() {
 }
 
 func (w *wordBuilder) finish() []Segment {
+	w.flushLiteral()
 	return compactSegments(w.segs)
 }
 
