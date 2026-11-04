@@ -125,6 +125,7 @@ command:
 # 语料中引号外反引号 0 次；若实现不支持，应报错而非误解析
 command:
   echo `echo hi`
+optional: true
 
 --- name: X/028-trailing-backslash
 command:

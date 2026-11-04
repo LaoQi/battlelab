@@ -38,6 +38,7 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 - `extraction.md` — 本文库的抽取边界与判据
 - `vbash.md` — 虚拟 bash 方向的语料分析（分层/引号/heredoc/外部程序边界）
 - `vbash-bench.md` — 虚拟 bash 回归基准（`testdata/vbash-bench/`，离线手动运行）
+- `vbash-plan.md` — 虚拟 bash 的特性范围与实施规划（边界、特性矩阵、跨平台归一、分步门槛）
 
 这些文档 2026-10-22 随 `agent`/`tools`/`ctty` 从 tanya 迁入；文中 `tanya 的 …` 前缀指 tanya 仓库的同名文档。
 

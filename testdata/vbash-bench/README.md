@@ -8,7 +8,7 @@
 ./run.py --target /bin/bash          # 自检，应 193/193
 ./run.py --record                    # 重新生成 golden
 ./run.py --target ./mybash -v        # 测被测实现
-./run.py --target ./mybash --min-rates "T0=100,T1=100,T2=95,T3=90,C=100,X=100"
+./run.py --target ./mybash --min-rates "T0=100,T1=100,T2=95,T3h=90,C=100,X=100"
 ```
 
 或从仓库根：`make vbash-check`。

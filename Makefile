@@ -17,7 +17,7 @@ cross:
 	@echo "cross: OK"
 
 vbash-check:
-	@cd $(VBASH_DIR) && ./run.py --target $(VBASH_TARGET) --min-rates "T0=100,T1=100,T2=95,T3=90,C=100,X=100"
+	@cd $(VBASH_DIR) && ./run.py --target $(VBASH_TARGET) --min-rates "T0=100,T1=100,T2=95,T3h=90,T3c=0,C=100,X=100"
 
 vbash-record:
 	@cd $(VBASH_DIR) && ./run.py --record

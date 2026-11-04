@@ -20,8 +20,8 @@ testdata/vbash-bench/
 │   ├── T0-simple.case        20 条  单命令+参数
 │   ├── T1-pipeline.case      36 条  管道/串联/重定向/退出码/cd
 │   ├── T2-expansion.case     32 条  变量/命令替换/参数展开/分词
-│   ├── T3-heredoc.case       20 条  heredoc（嵌套/多终止符/python 内联）
-│   ├── T3-controlflow.case   25 条  for/if/while/case/函数/分组
+│   ├── T3-heredoc.case       20 条  heredoc（嵌套/多终止符/python 内联）→ 层级 T3h
+│   ├── T3-controlflow.case   25 条  for/if/while/case/函数/分组 → 层级 T3c
 │   ├── C-corpus.case         30 条  真实语料高频形态（脱敏改写）
 │   └── X-edge.case           30 条  边界鲁棒性（不崩不挂）
 ├── golden/           基准期望（193 个 json，由 run.py --record 生成，勿手改）
@@ -73,7 +73,7 @@ cd testdata/vbash-bench
 ./run.py --target ./mybash --filter T3  # 只跑 heredoc/控制流
 ./run.py --target ./mybash --verbose    # 打印失败详情与 diff
 ./run.py --target ./mybash \
-    --min-rates "T0=100,T1=100,T2=95,T3=90,C=100,X=100"   # CI 门槛
+    --min-rates "T0=100,T1=100,T2=95,T3h=90,C=100,X=100"  # CI 门槛
 ./run.py --target ./mybash --json out.json
 ```
 
@@ -111,9 +111,16 @@ cd testdata/vbash-bench
 | T0 | 7.8% | 100% |
 | T1 | 59.7% | 100% |
 | T2 | 2.6% | 95% |
-| T3 | 30.0% | 90% |
+| T3h（heredoc） | 26.3% | 90% |
+| T3c（控制流） | <6% | 一阶段不计入必过（建议 0%，逐步提到 80%） |
 | C | — | 100% |
 | X | — | 100% |
+
+`T3` 曾把 heredoc（20 条）与控制流（25 条）合算一层，门槛 90% 与「控制流一阶段可不做」
+矛盾（只做 heredoc 上限 44.4%）。现按用例名前缀拆为 `T3h` / `T3c` 两层分别统计。
+
+`optional: true` 的用例（语料 0 次但基准收录的构造：`[[ ]]`/反引号/`case`）只校验
+「不崩、不挂起、退出码合理」，不校验输出——实现可以选择报错而非支持。
 
 ## 7 语料抽取与脱敏
 

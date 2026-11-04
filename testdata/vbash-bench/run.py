@@ -4,7 +4,7 @@ import argparse, json, os, re, shlex, shutil, subprocess, sys, tempfile, difflib
 
 CASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cases')
 GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'golden')
-FIELDS = ('name', 'setup', 'command', 'stdin', 'files', 'env', 'cwd', 'expect_exit', 'skip_golden', 'check_files', 'timeout', 'note')
+FIELDS = ('name', 'setup', 'command', 'stdin', 'files', 'env', 'cwd', 'expect_exit', 'skip_golden', 'check_files', 'optional', 'timeout', 'note')
 
 def parse_case_file(path):
     """解析 .case。
@@ -99,6 +99,7 @@ def load_cases(files=None):
         except Exception:
             c['files'] = {}
         c['skip_golden'] = str(c.get('skip_golden', '')).lower() in ('true', '1', 'yes')
+        c['optional'] = str(c.get('optional', '')).lower() in ('true', '1', 'yes')
         if 'expect_exit' in c and c['expect_exit'] != '':
             c['expect_exit'] = int(c['expect_exit'])
         else:
@@ -202,6 +203,11 @@ def compare(case, res, gold, no_stderr):
     if res.get('timeout'):
         fails.append('TIMEOUT')
         return fails
+    if case.get('optional'):
+        # 可选构造（[[ ]]/反引号/case 等）：只要求不崩、退出码合理，不校验输出
+        if res.get('exit') not in (0, 1, 2, 127, 126) and res.get('exit') is not None:
+            fails.append('optional: 退出码异常 %r' % res.get('exit'))
+        return fails
     exp_exit = case.get('expect_exit', gold.get('exit'))
     if exp_exit is not None and res.get('exit') != exp_exit:
         fails.append('exit: want %r got %r' % (exp_exit, res.get('exit')))
@@ -226,7 +232,7 @@ def main():
     ap.add_argument('--json', help='把结果写成 JSON')
     ap.add_argument('--no-stderr', action='store_true')
     ap.add_argument('--max-fail-print', type=int, default=10)
-    ap.add_argument('--min-rates', help='各层级门槛，如 "T0=100,T1=100,T3=90"，未达标则退出 1')
+    ap.add_argument('--min-rates', help='各层级门槛，如 "T0=100,T1=100,T3h=90"，未达标则退出 1')
     args = ap.parse_args()
 
     cases = load_cases(args.files)
@@ -286,6 +292,7 @@ def main():
         json.dump({'results': results, 'stats': stats}, open(args.json, 'w'), ensure_ascii=False, indent=1)
 
     bad = [] if tp == tf else ['存在失败用例']
+    gates = []
     if args.min_rates:
         for item in args.min_rates.split(','):
             kv = [x for x in re.split(r'[=:]', item.strip()) if x]
@@ -295,10 +302,11 @@ def main():
             p, t, _ = stats.get(tier, [0, 0, 0])
             rate = (p / t * 100) if t else 0.0
             if rate < need:
-                bad.append('%s 通过率 %.1f%% < %g%%' % (tier, rate, need))
-        if bad and '存在失败用例' not in bad:
-            for b in bad:
-                print('GATE ' + b)
+                gates.append('%s 通过率 %.1f%% < %g%%' % (tier, rate, need))
+        for g in gates:
+            print('GATE ' + g)
+        if gates:
+            bad.append('未达门槛')
     return 1 if bad else 0
 
 if __name__ == '__main__':
