@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "f.txt"
+ ],
+ "stderr": "",
+ "stdout": "v2\n",
+ "timeout": false
+}

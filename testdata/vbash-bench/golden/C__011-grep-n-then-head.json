@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "3:func a() {}\n4:func b() {}\n5:func c() {}\n",
+ "timeout": false
+}

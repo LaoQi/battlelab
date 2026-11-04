@@ -1,0 +1,166 @@
+# T3-a：heredoc。语料中 26.1% 的命令含 heredoc，其中 90% 是引号化的 <<'EOF'（体内字面，不展开）。
+# heredoc 体占全部命令字符的 80%，是"命令体积"的主要来源。
+# 另有 21.2% 的 heredoc 命令在终止符之后还有后续命令 —— 不能把 heredoc 当命令结束。
+
+--- name: T3/001-heredoc-quoted-literal
+command:
+  cat <<'EOF'
+  a $HOME b
+  EOF
+files: {}
+
+--- name: T3/002-heredoc-unquoted-expand
+# 未引号化的 heredoc 体内要做变量展开（语料仅 1.3%，但语义必须在）
+command:
+  X=val
+  cat <<EOF
+  got $X
+  EOF
+
+--- name: T3/003-heredoc-write-file-then-read
+# 语料最高频形态：cat > file <<'EOF' ... EOF，接一个校验命令
+command:
+  cat > out.md <<'EOF'
+  # title
+  body line
+  EOF
+  cat out.md
+files: {}
+
+--- name: T3/004-heredoc-then-cat-n
+command:
+  cat > f.txt <<'EOF'
+  l1
+  l2
+  EOF
+  cat -n f.txt
+
+--- name: T3/005-heredoc-append
+command:
+  printf 'a\n' > f.txt
+  cat >> f.txt <<'EOF'
+  b
+  EOF
+  cat f.txt
+
+--- name: T3/006-heredoc-two-in-one-command
+# 单命令含 >=2 个 heredoc 占语料 3.3%（最多 12 个），必须逐个配对
+command:
+  cat > a.txt <<'A'
+  one
+  A
+  cat > b.txt <<'B'
+  two
+  B
+  cat a.txt b.txt
+
+--- name: T3/007-heredoc-nested-in-shell-script
+# heredoc 体里又有 heredoc（生成脚本的脚本），终止符必须栈式配对
+command:
+  cat > gen.sh <<'OUTER'
+  cat > inner.txt <<'INNER'
+  inner-content
+  INNER
+  OUTER
+  bash gen.sh; cat inner.txt
+
+--- name: T3/008-heredoc-body-has-separators
+# 体内含 | ; && 等，绝不能当成命令分隔符
+command:
+  cat <<'EOF' > f.txt
+  a | b; c && d
+  EOF
+  cat f.txt
+
+--- name: T3/009-heredoc-body-has-terminator-like-line
+# 体内出现与终止符相近但不相同的行，不能提前终止
+command:
+  cat <<'EOF' > f.txt
+  EOF_not_really
+   EOF
+  EOF
+  cat f.txt
+
+--- name: T3/010-heredoc-indented-body
+# 非 <<- 时，体里的缩进要原样保留
+command:
+  cat <<'EOF' > f.txt
+    indented
+  EOF
+  cat -A f.txt | head -1
+
+--- name: T3/011-heredoc-dash-strip-tabs
+# <<- 会剥掉体首部的制表符（只剥 tab，不剥空格）
+command:
+  printf 'cat <<-EOF > f.txt\n\ttabbed\n\tEOF\ncat -A f.txt | head -1\n'
+
+--- name: T3/012-heredoc-python-inline
+# 语料里 python3 - <<'PY' 有 6426 条，占比最高的 heredoc 用法
+command:
+  python3 - <<'PY'
+  print("from python")
+  print(1+1)
+  PY
+
+--- name: T3/013-heredoc-python-triple-quote
+# python heredoc 体内含三引号字符串（2834 处），shell 层不应误判终止
+command:
+  python3 - <<'PY'
+  s = '''multi
+  line'''
+  print(len(s.splitlines()))
+  PY
+
+--- name: T3/014-heredoc-python-write-file
+command:
+  python3 - <<'PY'
+  open('w.txt','w').write('written\n')
+  PY
+  cat w.txt
+
+--- name: T3/015-heredoc-then-pipe
+command:
+  cat <<'EOF' | tr a-z A-Z
+  abc
+  EOF
+
+--- name: T3/016-heredoc-with-stdin-redirect
+command:
+  cat <<'EOF' > out.txt
+  content
+  EOF
+  wc -l < out.txt
+
+--- name: T3/017-heredoc-empty-body
+command:
+  cat <<'EOF' > e.txt
+  EOF
+  wc -c < e.txt
+
+--- name: T3/018-heredoc-body-blank-lines
+command:
+  cat <<'EOF' > f.txt
+  a
+
+  b
+  EOF
+  wc -l < f.txt
+
+--- name: T3/019-heredoc-markdown-body
+# 语料里 heredoc 常用于写 markdown 文档（含 # 标题、表格、反引号）
+command:
+  cat > d.md <<'EOF'
+  # Head
+  | a | b |
+  |---|---|
+  `code`
+  EOF
+  grep -c '|' d.md
+
+--- name: T3/020-heredoc-quoted-double
+# <<"EOF" 与 <<'EOF' 等价：体内不展开
+command:
+  X=1
+  cat <<"EOF"
+  $X
+  EOF

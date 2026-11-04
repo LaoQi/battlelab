@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "cat <<-EOF > f.txt\n\ttabbed\n\tEOF\ncat -A f.txt | head -1\n",
+ "timeout": false
+}

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')\n",
+ "stdout": "body without terminator\n",
+ "timeout": false
+}

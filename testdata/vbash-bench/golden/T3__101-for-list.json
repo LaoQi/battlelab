@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "== a\n== b\n== c\n",
+ "timeout": false
+}

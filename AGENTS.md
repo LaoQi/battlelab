@@ -36,6 +36,8 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 - `session-handoff.md` — 会话交接（`/next` + `next_session`）
 - `cache-probe.md` — prompt cache 实测与台阶
 - `extraction.md` — 本文库的抽取边界与判据
+- `vbash.md` — 虚拟 bash 方向的语料分析（分层/引号/heredoc/外部程序边界）
+- `vbash-bench.md` — 虚拟 bash 回归基准（`testdata/vbash-bench/`，离线手动运行）
 
 这些文档 2026-10-22 随 `agent`/`tools`/`ctty` 从 tanya 迁入；文中 `tanya 的 …` 前缀指 tanya 仓库的同名文档。
 
@@ -45,6 +47,7 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 go build ./... && go vet ./...          # 构建 + 静态检查
 go test ./... && go test -race ./...    # 全量测试 + 竞态
 make cross                              # darwin/windows 的 vet + 测试编译
+make vbash-check                        # 虚拟 bash 基准自检（需 bash + python3，非 Go 测试）
 ```
 
 调用方：`tanya`（终端前台）、`ivan`（常驻后台），依赖已发布版本；本地联调时临时写 `replace ../battlelab`。

@@ -1,0 +1,7 @@
+{
+ "exit": 2,
+ "files": [],
+ "stderr": "/bin/bash: -c: line 1: syntax error near unexpected token `fi'\n/bin/bash: -c: line 1: `fi'\n",
+ "stdout": "",
+ "timeout": false
+}

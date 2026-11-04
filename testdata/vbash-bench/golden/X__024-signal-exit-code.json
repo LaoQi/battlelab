@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "Terminated                 sh -c 'kill -TERM $$'\n",
+ "stdout": "rc=143\n",
+ "timeout": false
+}

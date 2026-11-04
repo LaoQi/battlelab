@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "out.md"
+ ],
+ "stderr": "",
+ "stdout": "# title\nbody line\n",
+ "timeout": false
+}

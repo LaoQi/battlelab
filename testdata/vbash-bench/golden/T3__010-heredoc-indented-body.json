@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "f.txt"
+ ],
+ "stderr": "",
+ "stdout": "  indented$\n",
+ "timeout": false
+}

@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "d.md"
+ ],
+ "stderr": "",
+ "stdout": "2\n",
+ "timeout": false
+}

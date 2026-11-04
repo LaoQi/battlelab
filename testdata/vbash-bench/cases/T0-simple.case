@@ -1,0 +1,99 @@
+# T0：单命令 + 参数 + 简单重定向。语料占比 7.8%，必须 100% 通过。
+# 这些是真实会话里出现频率最高、形态最简单的调用。
+
+--- name: T0/001-cat
+command:
+  cat a.txt
+files: {"a.txt": "hello\nworld\n"}
+
+--- name: T0/002-cat-n
+# cat -n 给行号，数字宽度受文件行数影响，是容易被"简化实现"写错的地方
+command:
+  cat -n a.txt
+files: {"a.txt": "alpha\nbeta\n"}
+
+--- name: T0/003-head-n
+command:
+  head -2 a.txt
+files: {"a.txt": "1\n2\n3\n4\n5\n"}
+
+--- name: T0/004-tail-n
+command:
+  tail -2 a.txt
+files: {"a.txt": "1\n2\n3\n4\n5\n"}
+
+--- name: T0/005-head-missing-file
+# 文件不存在时 head 自己报错、退出码 1；虚拟实现不能静默吞掉
+command:
+  head -5 nope.txt
+
+--- name: T0/006-cat-missing-file
+command:
+  cat nope.txt
+
+--- name: T0/007-echo-quoted
+# 双引号内的空格与中文都要原样保留
+command:
+  echo "hello world 中文"
+
+--- name: T0/008-echo-single-quoted
+# 单引号内一切字面，$ 不展开
+command:
+  echo 'a $HOME b'
+
+--- name: T0/009-printf
+# printf 不自动换行，且要解释格式符
+command:
+  printf '%s-%s\n' foo bar
+
+--- name: T0/010-wc-l
+command:
+  wc -l a.txt
+files: {"a.txt": "1\n2\n3\n"}
+
+--- name: T0/011-true-false-exit
+command:
+  false; echo $?
+setup: |
+  true
+
+--- name: T0/012-unknown-command
+# 不存在的外部命令：stderr 文案各家实现不同，只比退出码与 stdout
+command:
+  definitely_not_a_command_xyz 2>/dev/null; echo "rc=$?"
+expect_exit: 0
+
+--- name: T0/013-quoted-semicolon
+# 引号内的分号不是命令分隔符（语料里 23.9% 的命令踩这个坑）
+command:
+  echo "a; b"
+
+--- name: T0/014-quoted-pipe
+command:
+  echo "a | b"
+
+--- name: T0/015-quoted-and
+command:
+  echo "a && b"
+
+--- name: T0/016-semicolon-separator
+command:
+  echo one; echo two
+
+--- name: T0/017-and-list
+command:
+  echo one && echo two
+
+--- name: T0/018-and-list-fail-shortcircuit
+# 第一段失败后第二段不得执行（&& 短路）
+command:
+  false && echo never; echo "after=$?"
+
+--- name: T0/019-or-list-fallback
+command:
+  false || echo fallback
+
+--- name: T0/020-semicolon-not-shortcircuit
+# ; 串联不因前一条失败而停
+command:
+  false; echo still-here

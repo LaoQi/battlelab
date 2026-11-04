@@ -1,0 +1,7 @@
+{
+ "exit": 2,
+ "files": [],
+ "stderr": "/bin/bash: -c: line 1: syntax error near unexpected token `&&'\n/bin/bash: -c: line 1: `&& echo x'\n",
+ "stdout": "",
+ "timeout": false
+}

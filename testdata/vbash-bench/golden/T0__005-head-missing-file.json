@@ -1,0 +1,7 @@
+{
+ "exit": 1,
+ "files": [],
+ "stderr": "head: cannot open 'nope.txt' for reading: No such file or directory\n",
+ "stdout": "",
+ "timeout": false
+}

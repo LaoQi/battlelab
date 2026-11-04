@@ -1,0 +1,10 @@
+{
+ "exit": 0,
+ "files": [
+  "gen.sh",
+  "inner.txt"
+ ],
+ "stderr": "",
+ "stdout": "inner-content\n",
+ "timeout": false
+}

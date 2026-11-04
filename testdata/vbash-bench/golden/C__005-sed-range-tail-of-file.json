@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "func main() {\n\tprintln(1)\n}\n",
+ "timeout": false
+}

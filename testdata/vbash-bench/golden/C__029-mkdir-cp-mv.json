@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "d/new/b.txt"
+ ],
+ "stderr": "",
+ "stdout": "b.txt\n",
+ "timeout": false
+}

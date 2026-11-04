@@ -1,0 +1,140 @@
+# T2：展开。语料占比 2.6%（变量 4.4%、命令替换 2.7%），但一旦用上就必须正确，
+# 且"引号内是否展开"是常见实现错误来源。
+
+--- name: T2/001-var-assign-use
+command:
+  X=abc; echo "$X"
+
+--- name: T2/002-var-unquoted-word-splitting
+# 未加引号的变量要做分词（IFS），这是 vs 加引号的关键差异
+command:
+  X="a  b"; printf '[%s]' $X; echo
+
+--- name: T2/003-var-quoted-no-split
+command:
+  X="a  b"; printf '[%s]' "$X"; echo
+
+--- name: T2/004-var-in-single-quotes
+# 单引号内不展开
+command:
+  X=abc; echo '$X'
+
+--- name: T2/005-var-braces
+command:
+  X=abc; echo "${X}def"
+
+--- name: T2/006-var-default
+command:
+  unset Z; echo "${Z:-dflt}"; echo "${Z-fallback}"
+
+--- name: T2/007-var-length
+command:
+  X=abcdef; echo "${#X}"
+
+--- name: T2/008-var-trim-suffix
+command:
+  F=a/b/c.txt; echo "${F##*/}"; echo "${F%.*}"; echo "${F%%.*}"
+
+--- name: T2/009-var-replace
+command:
+  X=a-b-c; echo "${X/-/_}"; echo "${X//-/_}"
+
+--- name: T2/010-cmdsub-basic
+command:
+  echo "$(echo hi)"
+
+--- name: T2/011-cmdsub-nested-quotes
+command:
+  echo "x=$(printf 'a b')"
+
+--- name: T2/012-cmdsub-in-assignment
+command:
+  N=$(printf 'a\nb\nc\n' | wc -l); echo "n=$N"
+
+--- name: T2/013-cmdsub-strips-trailing-newlines
+command:
+  X=$(printf 'v\n\n\n'); printf '[%s]' "$X"; echo
+
+--- name: T2/014-cmdsub-exit-code
+# $? 反映命令替换是否成功
+command:
+  X=$(false); echo "rc=$?"
+
+--- name: T2/015-cmdsub-in-arg
+command:
+  echo prefix-$(echo mid)-suffix
+
+--- name: T2/016-arithmetic
+command:
+  echo $((1+2*3))
+
+--- name: T2/017-arithmetic-var
+command:
+  N=4; echo $((N*N))
+
+--- name: T2/018-tilde-expand
+# 语料 23.5% 的命令用 ~/ 开头，虚拟实现要做 HOME 展开
+command:
+  echo ~ | grep -c .
+
+--- name: T2/019-tilde-in-path
+command:
+  mkdir -p ~/d && echo x > ~/d/f && cat ~/d/f
+
+--- name: T2/020-special-question
+command:
+  true; echo $?
+
+--- name: T2/021-special-hash
+command:
+  set -- a b c; echo $#
+
+--- name: T2/022-special-at
+command:
+  set -- a b; printf '[%s]' "$@"; echo
+
+--- name: T2/023-special-star
+command:
+  set -- a b; printf '[%s]' "$*"; echo
+
+--- name: T2/024-export-visible-to-child
+command:
+  export FOO=bar; sh -c 'echo "$FOO"'
+
+--- name: T2/025-not-exported-invisible
+# 未 export 的变量不应出现在子进程环境里
+command:
+  FOO2=bar2; sh -c 'echo "[${FOO2}]"'
+
+--- name: T2/026-dollar-single-quote
+# ANSI-C 引用 $'...'（语料 0.2%）
+command:
+  printf '%s' $'a\tb'; echo
+
+--- name: T2/027-backslash-escape
+command:
+  echo "a\"b"
+
+--- name: T2/028-cmdsub-with-pipe
+command:
+  echo "$(printf 'x\ny\n' | head -1)"
+
+--- name: T2/029-var-adjacent-text
+# $Xdef 会被解析成变量 Xdef，不是 X + def —— 常见解析错误
+command:
+  X=1; Xdef=2; echo "$Xdef"; echo "${X}def"
+
+--- name: T2/030-glob-expand
+# glob 展开（语料仅 1.1%，但 ls 类命令依赖它）
+command:
+  echo *.txt
+files: {"a.txt": "x\n", "b.txt": "y\n"}
+
+--- name: T2/031-glob-no-match-literal
+# 无匹配时 bash 保留字面量（nullglob 未开）
+command:
+  echo *.nomatch
+
+--- name: T2/032-env-var-from-proc
+command:
+  FOO=xyz sh -c 'echo $FOO'

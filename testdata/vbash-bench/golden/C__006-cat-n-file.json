@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "     1\tpackage main\n     2\t\n     3\tfunc main() {}\n",
+ "timeout": false
+}

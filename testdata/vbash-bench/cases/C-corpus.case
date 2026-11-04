@@ -1,0 +1,219 @@
+# C：从真实会话语料抽取的高频形态回归。
+# 指纹来自 212 个会话文件，按出现频次排序后脱敏改写。夹具是一个典型 Go 项目树。
+# 这些形态覆盖了语料中最常见的组合：cd+cat / sed -n 区间 / grep+head / echo 分隔标题。
+
+--- name: C/001-cd-cat-file
+# 语料最高频形态（103 次）：cd 项目 && cat 某文件
+command:
+  cd d/tower && cat docs/plan.md
+setup: |
+  mkdir -p d/tower/docs
+  printf '# plan\nline2\nline3\n' > d/tower/docs/plan.md
+
+--- name: C/002-cat-file
+# 语料最高频单命令（279 次）
+command:
+  cat d/tower/docs/plan.md
+setup: |
+  mkdir -p d/tower/docs
+  printf '# plan\nline2\nline3\n' > d/tower/docs/plan.md
+
+--- name: C/003-sed-range-120
+# 语料中 sed -n 1,120p 是出现最多的区间（63+34+32+31+25 次量级）
+command:
+  sed -n 1,3p d/tower/docs/plan.md
+setup: |
+  mkdir -p d/tower/docs
+  seq 1 200 | sed 's/^/line/' > d/tower/docs/plan.md
+
+--- name: C/004-sed-range-quoted
+command:
+  cd d/tower && sed -n '1,3p' docs/plan.md
+setup: |
+  mkdir -p d/tower/docs
+  seq 1 200 | sed 's/^/line/' > d/tower/docs/plan.md
+
+--- name: C/005-sed-range-tail-of-file
+# sed -n '/start/,$p' 从匹配行到结尾——语料里用于看函数体
+command:
+  sed -n '/^func main/,$p' d/x/main.go
+setup: |
+  mkdir -p d/x
+  printf 'package main\n\nfunc helper() {}\n\nfunc main() {\n\tprintln(1)\n}\n' > d/x/main.go
+
+--- name: C/006-cat-n-file
+# cat -n 看代码带行号（38 次）
+command:
+  cat -n d/x/main.go
+setup: |
+  mkdir -p d/x
+  printf 'package main\n\nfunc main() {}\n' > d/x/main.go
+
+--- name: C/007-cd-cat-n
+command:
+  cd d/x && cat -n main.go
+setup: |
+  mkdir -p d/x
+  printf 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n' > d/x/main.go
+
+--- name: C/008-cat-multi-files
+# cat 一次看多个文件（22 次）
+command:
+  cat d/x/a.go d/x/b.go
+setup: |
+  mkdir -p d/x
+  printf 'A\n' > d/x/a.go
+  printf 'B\n' > d/x/b.go
+
+--- name: C/009-echo-sep-cat-cat
+# echo "=== 文件名 ===" 作分隔后连看多个文件（14 次）
+command:
+  cat d/x/a.go; echo "=== b.go ==="; cat d/x/b.go
+setup: |
+  mkdir -p d/x
+  printf 'A\n' > d/x/a.go
+  printf 'B\n' > d/x/b.go
+
+--- name: C/010-head-n-file
+command:
+  head -3 d/x/big.txt
+setup: |
+  mkdir -p d/x
+  seq 1 500 > d/x/big.txt
+
+--- name: C/011-grep-n-then-head
+# 语料最常见的代码探索：grep -n 定位 + head 截断
+command:
+  grep -n "func " d/x/a.go | head -3
+setup: |
+  mkdir -p d/x
+  printf 'package p\n\nfunc a() {}\nfunc b() {}\nfunc c() {}\nfunc d() {}\n' > d/x/a.go
+
+--- name: C/012-grep-r-count
+command:
+  grep -rc "TODO" d/x | head -5
+setup: |
+  mkdir -p d/x/sub
+  printf 'TODO a\n' > d/x/a.txt
+  printf 'TODO b\nTODO c\n' > d/x/sub/b.txt
+
+--- name: C/013-pwd-ls
+# 5 次：pwd && ls -la 确认位置。pwd 输出了沙箱绝对路径，只比尾部可复现部分
+command:
+  cd d/x && pwd | sed 's#.*/d/#d/#' && ls -la | wc -l
+setup: |
+  mkdir -p d/x
+  printf '1\n' > d/x/f1.txt
+
+--- name: C/014-cd-find-sort
+command:
+  cd d/x && find . -type f | sort
+setup: |
+  mkdir -p d/x/sub
+  printf '1\n' > d/x/a.txt
+  printf '2\n' > d/x/sub/b.txt
+
+--- name: C/015-wc-l-multi
+command:
+  cd d/x && wc -l *.txt
+setup: |
+  mkdir -p d/x
+  printf '1\n2\n' > d/x/a.txt
+  printf '1\n2\n3\n' > d/x/b.txt
+
+--- name: C/016-diff-two-files
+command:
+  diff d/x/a.txt d/x/b.txt; echo "rc=$?"
+setup: |
+  mkdir -p d/x
+  printf 'same\n' > d/x/a.txt
+  printf 'same\n' > d/x/b.txt
+
+--- name: C/017-printf-header-for-loop
+# 语料里 for 循环 + echo -n 打表格式输出
+command:
+  for t in a b c; do echo -n "$t: "; wc -l < d/x/$t.txt; done
+setup: |
+  mkdir -p d/x
+  printf '1\n' > d/x/a.txt
+  printf '1\n2\n' > d/x/b.txt
+  printf '1\n2\n3\n' > d/x/c.txt
+
+--- name: C/018-grep-e-multipattern
+command:
+  grep -E "TODO|FIXME" d/x/a.txt | wc -l
+setup: |
+  mkdir -p d/x
+  printf 'TODO x\nFIXME y\nnone\n' > d/x/a.txt
+
+--- name: C/019-tail-c-600-python-read
+# 语料真实形态：tail -c 600 后再交给 python 处理
+command:
+  tail -c 20 d/x/a.txt | wc -c
+setup: |
+  mkdir -p d/x
+  printf '0123456789abcdefghijKLMNOP\n' > d/x/a.txt
+
+--- name: C/020-cat-heredoc-into-file-then-verify
+command:
+  cd d/x && cat > notes.md <<'EOF'
+  # notes
+  - item
+  EOF
+  wc -l < notes.md
+setup: |
+  mkdir -p d/x
+
+--- name: C/021-ls-la-filter
+command:
+  cd d/x && ls -la | grep -c '^-'
+setup: |
+  mkdir -p d/x
+  printf '1\n' > d/x/a.txt
+  printf '2\n' > d/x/b.txt
+
+--- name: C/022-sed-inplace-batch
+command:
+  cd d/x && sed -i 's/old/new/g' a.txt && cat a.txt
+setup: |
+  mkdir -p d/x
+  printf 'old old\n' > d/x/a.txt
+
+--- name: C/023-cat-with-pipe-tr
+command:
+  printf 'a-b-c\n' | tr '-' '\n' | wc -l
+
+--- name: C/024-grep-v-comment
+command:
+  printf 'a\n#c\nb\n' | grep -v '^#' | wc -l
+
+--- name: C/025-sort-uniq-count
+command:
+  printf 'b\na\nb\n' | sort | uniq -c | sort -rn | head -1
+
+--- name: C/026-cut-fields
+command:
+  printf 'a:b:c\n' | cut -d: -f2
+
+--- name: C/027-awk-print
+command:
+  printf 'x 1\ny 2\n' | awk '{print $2}'
+
+--- name: C/028-xargs-with-sh
+# 语料中 xargs 用得少（0.4%）但出现即需正确
+command:
+  printf 'a\na\n' | xargs -n1 echo | wc -l
+
+--- name: C/029-mkdir-cp-mv
+command:
+  cd d && mkdir -p new && cp x/a.txt new/ && mv new/a.txt new/b.txt && ls new
+setup: |
+  mkdir -p d/x
+  printf '1\n' > d/x/a.txt
+
+--- name: C/030-rm-then-verify
+command:
+  cd d && rm -f x/a.txt && ls x | wc -l
+setup: |
+  mkdir -p d/x
+  printf '1\n' > d/x/a.txt

@@ -1,0 +1,183 @@
+# T1：管道、串联、重定向、退出码。语料占比 59.7%，是虚拟 bash 必须做到 100% 的层级。
+# 断言口径：stdout 精确比对 + 退出码。stderr 通常也比，除少数实现差异大的场景。
+
+--- name: T1/001-pipe-basic
+command:
+  echo hello | tr a-z A-Z
+
+--- name: T1/002-pipe-multi
+# 三段管道：语料里 56.8% 的命令含管道，最常见的形态是 grep | head
+command:
+  printf 'aa\nbb\naa\ncc\n' | grep aa | wc -l
+
+--- name: T1/003-pipe-exit-code-is-last
+# 管道退出码取最后一段，不是第一段
+command:
+  false | true; echo "rc=$?"
+setup: |
+  :
+
+--- name: T1/004-pipe-fail-middle
+# 中间段失败不影响最后一段成功
+command:
+  echo hi | grep -v nomatch | cat; echo "rc=$?"
+
+--- name: T1/005-redirect-out
+command:
+  echo hi > out.txt; cat out.txt
+files: {}
+
+--- name: T1/006-redirect-append
+command:
+  echo a > f.txt; echo b >> f.txt; cat f.txt
+files: {}
+
+--- name: T1/007-redirect-truncate
+# > 必须先清空再写，重复执行结果不变
+command:
+  echo first > g.txt; echo second > g.txt; cat g.txt
+files: {}
+
+--- name: T1/008-redirect-stdin
+command:
+  cat < in.txt
+files: {"in.txt": "from-file\n"}
+
+--- name: T1/009-redirect-2-to-1
+# 语料里 32.8% 的命令带 2>/dev/null 或 2>&1，是刚需
+command:
+  ls nope 2>&1 | wc -l
+files: {}
+
+--- name: T1/010-redirect-2-null
+command:
+  ls nope 2>/dev/null; echo "rc=$?"
+
+--- name: T1/011-redirect-dev-null
+command:
+  echo hidden > /dev/null; echo shown
+
+--- name: T1/012-redirect-both-order
+# 2>&1 在 > 之前与之后语义不同——这是 fd 复制的经典坑
+command:
+  sh -c 'echo out; echo err >&2' > o1.txt 2>&1; grep -c . o1.txt
+files: {}
+
+--- name: T1/013-cd-and-then
+# 58.4% 的命令以 cd 开头，cd 必须影响后续命令的 cwd
+command:
+  cd sub && cat x.txt
+files: {"sub/x.txt": "inside\n"}
+
+--- name: T1/014-cd-fail-shortcircuit
+# cd 失败时 && 后续不执行（cwd 状态未被污染）
+command:
+  cd no_such_dir && echo never; echo "rc=$?"
+
+--- name: T1/015-cd-persist-across-semicolon
+command:
+  cd sub; cat x.txt
+files: {"sub/x.txt": "inside\n"}
+
+--- name: T1/016-cd-parent
+command:
+  cd sub && cd .. && cat top.txt
+files: {"top.txt": "root\n", "sub/y.txt": "y\n"}
+
+--- name: T1/017-subshell-isolated-cd
+# ( ) 子 shell 里的 cd 不应影响外层
+command:
+  ( cd sub && pwd > /dev/null ); cat top.txt
+files: {"top.txt": "root\n", "sub/z.txt": "z\n"}
+
+--- name: T1/018-exit-code-sequence
+command:
+  true; echo $?; false; echo $?
+
+--- name: T1/019-grep-count
+command:
+  grep -c l a.txt
+files: {"a.txt": "hello\nworld\n"}
+
+--- name: T1/020-grep-status-quiet
+# grep 无匹配时退出码 1（不是 2），且 -q 不输出
+command:
+  grep -q zzz a.txt; echo "rc=$?"
+files: {"a.txt": "hello\n"}
+
+--- name: T1/021-sed-range-print
+# 语料中 sed 有 90% 是 -n 打印行区间（当翻页器用）
+command:
+  sed -n '2,3p' a.txt
+files: {"a.txt": "1\n2\n3\n4\n"}
+
+--- name: T1/022-sed-substitute-stdout
+command:
+  echo abc | sed 's/b/X/'
+
+--- name: T1/023-sed-inplace
+command:
+  echo v1 > f.txt; sed -i 's/v1/v2/' f.txt; cat f.txt
+files: {}
+
+--- name: T1/024-head-in-pipeline
+command:
+  printf '1\n2\n3\n4\n' | head -2
+
+--- name: T1/025-tail-follows-nothing
+command:
+  printf '1\n2\n3\n' | tail -1
+
+--- name: T1/026-echo-various-quotes
+command:
+  echo "x 'y' z"; echo 'x "y" z'
+
+--- name: T1/027-exit-status-of-missing-cmd
+command:
+  no_such_cmd_abc 2>/dev/null; echo "rc=$?"
+
+--- name: T1/028-and-chain-three
+command:
+  true && true && echo ok
+
+--- name: T1/029-or-chain
+command:
+  false || false || echo last
+
+--- name: T1/030-mixed-and-or
+# a && b || c 的分组语义：等价 ((a && b) || c)
+command:
+  false && echo never || echo fallback
+
+--- name: T1/031-background-and-wait-removed
+# 语料里行尾 & 只占 0.46%，但必须能解析（不能让 & 变成命令分隔符后丢失顺序）
+command:
+  echo bg > bg.txt & wait; cat bg.txt
+files: {}
+
+--- name: T1/032-redirect-then-pipe
+command:
+  echo hi > h.txt; cat h.txt | tr a-z A-Z
+files: {}
+
+--- name: T1/033-multiple-redirects-same-cmd
+command:
+  sh -c 'echo a; echo b >&2' 2>/dev/null 1>cap.txt; grep -c a cap.txt
+
+--- name: T1/034-newline-separated
+# 多行脚本（29.2% 的命令含换行），换行等价于分号
+command:
+  echo one
+  echo two
+
+--- name: T1/035-trailing-newline-and-empty-lines
+command:
+  echo a
+
+  echo b
+
+--- name: T1/036-comment-line
+# 行内注释不应被执行（语料中注释很少，但真实脚本里会混进 -c）
+command:
+  echo before  # 这是注释
+  echo after

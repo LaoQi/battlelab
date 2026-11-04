@@ -1,3 +1,6 @@
 *.test
 *.out
 /battlelab
+testdata/vbash-bench/out/
+__pycache__/
+*.pyc

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": " 2 a.txt\n 3 b.txt\n 5 total\n",
+ "timeout": false
+}

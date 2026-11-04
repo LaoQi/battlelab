@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "d/x/a.txt:1\nd/x/sub/b.txt:2\n",
+ "timeout": false
+}

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "line1\nline2\nline3\n",
+ "timeout": false
+}

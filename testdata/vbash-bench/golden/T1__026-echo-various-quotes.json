@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "x 'y' z\nx \"y\" z\n",
+ "timeout": false
+}

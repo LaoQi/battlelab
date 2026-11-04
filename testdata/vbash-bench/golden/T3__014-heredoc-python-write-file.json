@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "w.txt"
+ ],
+ "stderr": "",
+ "stdout": "written\n",
+ "timeout": false
+}

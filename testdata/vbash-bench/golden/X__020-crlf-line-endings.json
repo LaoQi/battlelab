@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "crlf.txt"
+ ],
+ "stderr": "",
+ "stdout": "2\n",
+ "timeout": false
+}

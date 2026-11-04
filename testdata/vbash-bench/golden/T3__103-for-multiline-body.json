@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "start a\nend a\nstart b\nend b\n",
+ "timeout": false
+}

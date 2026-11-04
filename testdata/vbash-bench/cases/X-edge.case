@@ -1,0 +1,140 @@
+# X：边界与鲁棒性。目标是「不能崩、不能挂、退出码合理」。
+# 语料实证：真实语法错误率 <0.1%，所以这里的价值是防止实现被恶意/畸形输入打挂。
+
+--- name: X/001-empty-command
+command:
+
+--- name: X/002-blank-lines-mid-script
+# 脚本中间的空白行不应产生空命令执行
+command:
+  echo a
+
+  echo b
+
+--- name: X/003-only-comment
+command:
+  # nothing here
+
+--- name: X/004-unterminated-single-quote
+# 未闭合引号：真 bash 报错退出 2，不能挂起等输入
+command:
+  echo 'abc
+expect_exit: 2
+
+--- name: X/005-unterminated-double-quote
+command:
+  echo "abc
+expect_exit: 2
+
+--- name: X/006-unterminated-heredoc
+# heredoc 未闭合：真 bash 警告并按 EOF 截断，退出 0
+command:
+  cat <<'EOF'
+  body without terminator
+
+--- name: X/007-unmatched-fi
+command:
+  fi
+expect_exit: 2
+
+--- name: X/008-cd-nonexistent
+command:
+  cd /no/such/dir/xyz; echo "rc=$?"
+
+--- name: X/009-very-long-line
+# 长参数（语料最长单命令 31KB）
+command:
+  printf '%s' "$(printf 'x%.0s' $(seq 1 2000))" | wc -c
+
+--- name: X/010-many-segments
+# 多段串联（语料 P90 为 8 段，10+ 段占 17.5%）
+command:
+  echo 1; echo 2; echo 3; echo 4; echo 5; echo 6; echo 7; echo 8; echo 9; echo 10 | tail -1
+
+--- name: X/011-deep-pipe
+command:
+  echo hi | cat | cat | cat | cat | cat | cat
+
+--- name: X/012-redirect-to-missing-dir
+# 目标目录不存在：报错退出，不创建目录
+command:
+  echo x > nodir/f.txt; echo "rc=$?"
+
+--- name: X/013-permission-denied
+command:
+  echo secret > f.txt; chmod 000 f.txt; cat f.txt 2>/dev/null; echo "rc=$?"
+
+--- name: X/014-null-byte-in-file
+command:
+  printf 'a\0b' > bin.dat; wc -c < bin.dat
+
+--- name: X/015-utf8-content
+command:
+  echo "中文——测试" | wc -m
+
+--- name: X/016-utf8-filename
+command:
+  echo x > "中文.txt"; ls | wc -l
+
+--- name: X/017-semicolon-only
+command:
+  ;
+
+--- name: X/018-pipe-only
+command:
+  |
+
+--- name: X/019-and-at-start
+command:
+  && echo x
+expect_exit: 2
+
+--- name: X/020-crlf-line-endings
+# CRLF 内容：行尾 \r 会污染变量内容，是常见翻车点
+command:
+  printf 'a\r\nb\r\n' > crlf.txt; wc -l < crlf.txt
+
+--- name: X/021-stdin-not-a-tty
+# 无 stdin 输入时 read 立即得到 EOF，不能挂住
+command:
+  read -r x; echo "rc=$?"
+
+--- name: X/022-large-output
+command:
+  seq 1 5000 | wc -l
+
+--- name: X/023-exit-code-127
+command:
+  nonexistent_cmd_zzz 2>/dev/null
+expect_exit: 127
+
+--- name: X/024-signal-exit-code
+# 被信号杀掉时退出码为 128+sig
+command:
+  sh -c 'kill -TERM $$'; echo "rc=$?"
+
+--- name: X/025-nested-quotes-escaped
+command:
+  echo "he said \"hi\" and 'bye'"
+
+--- name: X/026-dollar-in-single-quote
+command:
+  echo '$((1+1))'
+
+--- name: X/027-backtick-not-used
+# 语料中引号外反引号 0 次；若实现不支持，应报错而非误解析
+command:
+  echo `echo hi`
+
+--- name: X/028-trailing-backslash
+command:
+  echo abc \
+    def
+
+--- name: X/029-multiple-spaces
+command:
+  echo    a     b
+
+--- name: X/030-tab-separator
+command:
+  printf 'a\tb\n' | cut -f2

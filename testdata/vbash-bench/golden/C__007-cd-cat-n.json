@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "     1\ta\n     2\tb\n     3\tc\n     4\td\n     5\te\n     6\tf\n     7\tg\n     8\th\n     9\ti\n    10\tj\n",
+ "timeout": false
+}

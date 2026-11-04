@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "bin.dat"
+ ],
+ "stderr": "",
+ "stdout": "3\n",
+ "timeout": false
+}

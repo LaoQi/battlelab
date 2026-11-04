@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "out.txt"
+ ],
+ "stderr": "",
+ "stdout": "hi\n",
+ "timeout": false
+}

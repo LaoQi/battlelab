@@ -1,4 +1,6 @@
 CROSS_GOOS := darwin windows
+VBASH_DIR  := testdata/vbash-bench
+VBASH_TARGET ?= /bin/bash
 
 test:
 	go test ./...
@@ -14,4 +16,13 @@ cross:
 	done
 	@echo "cross: OK"
 
-.PHONY: test cross
+vbash-check:
+	@cd $(VBASH_DIR) && ./run.py --target $(VBASH_TARGET) --min-rates "T0=100,T1=100,T2=95,T3=90,C=100,X=100"
+
+vbash-record:
+	@cd $(VBASH_DIR) && ./run.py --record
+
+vbash-naive:
+	@cd $(VBASH_DIR) && ./run.py --target ./tools/reference-naive.py
+
+.PHONY: test cross vbash-check vbash-record vbash-naive

@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "bg.txt"
+ ],
+ "stderr": "",
+ "stdout": "bg\n",
+ "timeout": false
+}
