@@ -9,10 +9,14 @@ type UnsupportedError struct {
 }
 
 func (e *UnsupportedError) Error() string {
-	if e.Hint != "" {
-		return fmt.Sprintf("vbash: 不支持的构造 %s（第 %d 行第 %d 列）：%s", e.Construct, e.Pos.Line, e.Pos.Col, e.Hint)
+	at := ""
+	if e.Pos.Line > 0 {
+		at = fmt.Sprintf("（第 %d 行第 %d 列）", e.Pos.Line, e.Pos.Col)
 	}
-	return fmt.Sprintf("vbash: 不支持的构造 %s（第 %d 行第 %d 列）", e.Construct, e.Pos.Line, e.Pos.Col)
+	if e.Hint != "" {
+		return fmt.Sprintf("vbash: 不支持的构造 %s%s：%s", e.Construct, at, e.Hint)
+	}
+	return fmt.Sprintf("vbash: 不支持的构造 %s%s", e.Construct, at)
 }
 
 func unsupported(construct, hint string, pos Pos) error {
@@ -28,5 +32,8 @@ type SyntaxError struct {
 }
 
 func (e *SyntaxError) Error() string {
-	return fmt.Sprintf("vbash: 语法错误（第 %d 行第 %d 列）：%s", e.Pos.Line, e.Pos.Col, e.Msg)
+	if e.Pos.Line > 0 {
+		return fmt.Sprintf("vbash: 语法错误（第 %d 行第 %d 列）：%s", e.Pos.Line, e.Pos.Col, e.Msg)
+	}
+	return fmt.Sprintf("vbash: 语法错误：%s", e.Msg)
 }

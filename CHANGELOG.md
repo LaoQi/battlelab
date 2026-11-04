@@ -1,3 +1,15 @@
+## 2026-11-04 feat(shell): S8 接入 vbash——`run_shell` 可走进程内 bash 解释器（默认关闭）
+
+- **开关**：`shell.Config.Vbash`（默认 `false`）+ `Config.Environ`（启用时必填，`vbash` 不读 `os.Environ`）。非 POSIX shell（pwsh/cmd）下开启在 `New` 期报错；`interactive: true` 仍借终端、不经解释器
+- **执行路径**（`tools/shell/vbash.go`）：进程内 `vbash.RunScript`，复用 `streamCapture` 截断、`waitBounded` 放弃等待、`Result` 字段语义；不支持的构造与语法错误**直接报错、不回落宿主 shell**（D9）
+- **注入点**（`vbash.Config.ConfigureCmd`/`CancelCmd`）：进程组与树杀策略留在调用方（`platform.ConfigureGroup`/`platform.KillGroup`），库不预设平台策略，Windows `taskkill /T /F` 自动生效
+- **取消**：`vbash` 的 `runList` 每项前检查 `Ctx`，纯内建死循环（`while true; do :; done`）也能在截止时间退出；外部命令走 `exec.CommandContext` + `CancelCmd`
+- **执行器派生统一**：新增 `Runner.branch(env, io)`，管道/子 shell/命令替换三处克隆点收敛到它（钩子不再漏传）
+- **幂等收尾**：`streamCapture.finish()` 加 `sealed`，超时放弃后迟到写入不再改动已交付结果
+- **诊断**：`UnsupportedError`/`SyntaxError` 位置为零时省略「第 0 行第 0 列」
+- **实测**：`go build`/`vet`/`test`/`test -race`/`make cross` 全绿；`make vbash-self` 仍 **193/193**；新增 `tools/shell/vbash_test.go` 18 条用例
+- **文档**：`docs/vbash-impl.md` 新增 S8 节（产物、实现要点、偏差 S8-1…S8-5）、`docs/vbash-plan.md` 标注 S1–S8 完成、`docs/shell-tool.md` 新增 §17
+
 ## 2026-11-04 feat(vbash): S7 控制流——基准 193/193 全绿
 
 - **复合命令**（`vbash/parser_control.go`、`runner_control.go`、AST 新增 `Compound`/`CondClause`）：`for … in …; do … done`、`while`/`until …; do … done`、`if`-`elif`-`else`-`fi` 完整解析与执行

@@ -21,7 +21,7 @@ tanya 与 ivan 共用的 agent 核心库（Go）。模块路径 `github.com/LaoQ
 ```
 agent/   回合核心：Config 校验 / LLM 双协议（chat、responses）/ 回合循环 / prompt 组装（基座 + 全局说明 + 项目说明）/
          会话存储与归档 / 交接（next_session、Continue）/ 统计 / 工具注册与 agent_custom / 图像（缩放、裁剪、EXIF）
-tools/   tools.Standard 装配标准集与顺序；shell/ = run_shell（借出终端经注入的 Console 窄接口）；image/ = read_image；
+tools/   tools.Standard 装配标准集与顺序；shell/ = run_shell（借出终端经注入的 Console 窄接口；`Config.Vbash` 可切到进程内 vbash 解释器，默认关闭）；image/ = read_image；
          builtin/ = get_time/get_env/calc
 vbash/   虚拟 bash 解释器（实验特性）：词法/解析/内建执行，外部程序透传；不依赖 tools/
 ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、探测器、信号面（SIGTERM/SIGHUP/SIGINT/SIGWINCH/SIGQUIT）

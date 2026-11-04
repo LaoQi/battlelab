@@ -3,6 +3,55 @@
 > 配套 `docs/vbash-plan.md`（范围与决策）。本文只记**实施过程中的偏差与自定决策**，
 > 按阶段（S1…S8）分节，每节记录：做了什么、与规划不一致处、为什么。
 
+## S8 接入 tools/shell（2026-11-04）
+
+### 产出
+
+| 文件 | 内容 |
+|---|---|
+| `tools/shell/vbash.go` | `Tool.runVbash`：进程内跑 `vbash.RunScript`，复用 `streamCapture`/`waitBounded`/超时与中断语义 |
+| `tools/shell/tool.go` | `Config.Vbash`（默认关闭）+ `Config.Environ`（外部命令的环境来源）；装配期校验 |
+| `tools/shell/messages.go` | vbash 描述句与两条装配错误文案 |
+| `tools/shell/shell.go` | `streamCapture.seal()`：`finish()` 幂等（放弃等待后迟到写入不再改动结果） |
+| `tools/shell/vbash_test.go` | 18 条用例（内建/展开/外部透传/环境注入/cwd/不支持不回落/语法错误/超时/纯内建死循环/中断/截断/interactive 旁路/装配校验/描述） |
+| `vbash/runner.go` | `Config.ConfigureCmd`/`CancelCmd` 注入点（进程组与树杀策略留在调用方）、`branch()` 统一派生执行器、`runList` 每项前检查 `Ctx` |
+| `vbash/exec.go` | 外部命令套用 `ConfigureCmd`/`CancelCmd`（含 `WaitDelay`） |
+| `vbash/errors.go` | 位置为零时省略「第 0 行第 0 列」 |
+
+### 实现要点
+
+- **默认关闭，显式开启**：`Config.Vbash` 为 `false` 时执行路径与旧版完全一致（`bash -c`），
+  开关为实验特性背书（规划 §9 风险对策）。
+- **不回落**（D9）：`vbash` 报 `UnsupportedError`/`SyntaxError` 时直接进 `Result.Err` 或 stderr，
+  绝不改走宿主 shell；`TestVbashUnsupportedDoesNotFallBack` 断言 `case` 语句既不执行也无输出。
+- **错误分流**：`SyntaxError` 已由解释器按 bash 文案写进 stderr（基准逐字节要求），不再重复写 `Err`；
+  `ExitRequest`/`ReturnRequest` 是控制流信号不算错误；只有 `UnsupportedError` 与内部错误进 `Err` 行。
+- **超时与中断**：`waitBounded` 包住 `RunScript`（放弃等待即 `MsgAbandoned`），解释器内部靠
+  `runList` 的 `Ctx` 检查让纯内建死循环（`while true; do :; done`）也能在截止时间退出，
+  外部命令则由 `exec.CommandContext` + `CancelCmd` 组杀。
+- **进程组与树杀留在调用方**：`vbash` 只提供 `ConfigureCmd`/`CancelCmd` 两个钩子，
+  具体策略由 `tools/shell` 传 `platform.ConfigureGroup`/`platform.KillGroup`
+  ——库不预设平台策略（分层约束），Windows 的 `taskkill /T /F` 因此自动生效。
+- **`Environ` 必须注入**：`vbash` 是纯库，不读 `os.Environ`；装配期缺 `Environ` 直接报错，
+  避免外部命令拿到空环境这种静默故障。
+- **interactive 旁路**：`interactive: true` 仍走 `runFull`（终端所有权属 `ctty`），不经解释器。
+
+### 与规划的偏差与自定决策
+
+| # | 情况 | 处理 | 理由 |
+|---|---|---|---|
+| S8-1 | 规划 §6 把 `ConfigureGroup`/`KillGroup` 视为现成能力直接沿用 | `vbash.Config` 新增 `ConfigureCmd`/`CancelCmd` 钩子，由 `tools/shell` 注入 | `vbash` 是纯库不能 import `tools/shell`；把策略做成钩子既守住分层，也让 Windows 树杀自动生效 |
+| S8-2 | 规划未提解释器内部的取消检查 | `runList` 每项前检查 `Ctx`，并在展开/管道派生处补 `branch()` 传播钩子 | 纯内建死循环不开子进程，没有取消点就只能靠外层放弃等待（会白等满宽限期） |
+| S8-3 | 规划要求「配置开关（默认关闭）」但未定开关失败语义 | 非 POSIX shell（pwsh/cmd）下开启 `Vbash` 在 `New` 期报错 | 解释器只实现 bash 语法，在 pwsh 上开启必然是错的；装配期拒绝比运行期每条命令报错清楚 |
+| S8-4 | `vbash` 原先的 `UnsupportedError`/`SyntaxError` 文案总会带「第 0 行第 0 列」 | 位置为零时省略位置段 | 解析期错误多半没有精确位置；`Err` 行会直接进模型视野，不能带着假位置 |
+| S8-5 | `streamCapture.finish()` 原先非幂等 | 加 `sealed` 标记，写入与收尾在放弃等待后失效 | 超时放弃后迟到的写入不该改动已交付结果（`-race` 下也是数据竞争源） |
+
+### 验收
+
+- `go build ./... && go vet ./... && go test ./... && go test -race ./...` 全绿；`make cross` OK
+- `make vbash-self` 仍 **193/193**（接入未改动解释器语义）
+- 新增 `tools/shell/vbash_test.go` 18 条用例全过（含 1 秒超时的三条慢用例）
+
 ## S7 控制流（2026-11-04）
 
 ### 产出

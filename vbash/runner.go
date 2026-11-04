@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 )
@@ -17,6 +18,9 @@ type Runner struct {
 	Ctx       context.Context
 	Verbose   bool
 	Exec      Handler
+
+	ConfigureCmd func(*exec.Cmd)
+	CancelCmd    func(*exec.Cmd) error
 
 	expn          *expansion
 	ErrExit       bool
@@ -53,16 +57,18 @@ func Run(ctx context.Context, src string, cfg Config) (ExecResult, error) {
 }
 
 type Config struct {
-	Dir       string
-	Home      string
-	Env       []string
-	Args      []string
-	Arg0      string
-	Stdout    io.Writer
-	Stderr    io.Writer
-	Stdin     io.Reader
-	ShellName string
-	Handler   Handler
+	Dir          string
+	Home         string
+	Env          []string
+	Args         []string
+	Arg0         string
+	Stdout       io.Writer
+	Stderr       io.Writer
+	Stdin        io.Reader
+	ShellName    string
+	Handler      Handler
+	ConfigureCmd func(*exec.Cmd)
+	CancelCmd    func(*exec.Cmd) error
 }
 
 func NewRunner(ctx context.Context, cfg Config) *Runner {
@@ -88,7 +94,14 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 	if name == "" {
 		name = defaultShellName
 	}
-	r := &Runner{Env: env, Ctx: ctx, ShellName: name, Exec: cfg.Handler}
+	r := &Runner{
+		Env:          env,
+		Ctx:          ctx,
+		ShellName:    name,
+		Exec:         cfg.Handler,
+		ConfigureCmd: cfg.ConfigureCmd,
+		CancelCmd:    cfg.CancelCmd,
+	}
 	out := cfg.Stdout
 	errw := cfg.Stderr
 	in := cfg.Stdin
@@ -105,9 +118,26 @@ func (r *Runner) RunList(list *List) (int, error) {
 	return r.runList(list, r.IO)
 }
 
+func (r *Runner) branch(env *Env, io *IO) *Runner {
+	sub := &Runner{
+		Env:          env,
+		IO:           io,
+		ShellName:    r.ShellName,
+		Ctx:          r.Ctx,
+		Exec:         r.Exec,
+		ConfigureCmd: r.ConfigureCmd,
+		CancelCmd:    r.CancelCmd,
+	}
+	sub.expn = &expansion{env: env, runs: sub, io: io}
+	return sub
+}
+
 func (r *Runner) runList(list *List, io *IO) (int, error) {
 	code := r.Env.Status()
 	for _, item := range list.Items {
+		if err := r.Ctx.Err(); err != nil {
+			return r.Env.Status(), err
+		}
 		c, err := r.runAndOr(item.AndOr, io)
 		code = c
 		if err != nil {
@@ -188,9 +218,7 @@ func (r *Runner) runPipeline(pl *Pipeline, io *IO) (int, error) {
 	base := r.Env.Clone()
 	for i, cmd := range pl.Commands {
 		last := i == len(pl.Commands)-1
-		branch := &Runner{Env: base.Clone(), ShellName: r.ShellName, Ctx: r.Ctx, Exec: r.Exec}
-		branch.IO = io
-		branch.expn = &expansion{env: branch.Env, runs: branch, io: io}
+		branch := r.branch(base.Clone(), io)
 		childIO := io.clone()
 		childIO.In = in
 		if !last {
@@ -384,8 +412,7 @@ func (r *Runner) commandSubstitution(seg Segment) (string, error) {
 		}
 		list = parsed
 	}
-	sub := &Runner{Env: r.Env.Clone(), IO: subIO, ShellName: r.ShellName, Ctx: r.Ctx, Exec: r.Exec}
-	sub.expn = &expansion{env: sub.Env, runs: sub, io: subIO}
+	sub := r.branch(r.Env.Clone(), subIO)
 	code, err := sub.runList(list, subIO)
 	if err != nil {
 		var exitReq ExitRequest

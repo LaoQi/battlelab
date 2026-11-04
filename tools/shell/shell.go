@@ -198,12 +198,16 @@ type streamCapture struct {
 	written  int64
 	middle   int64
 	headDone bool
+	sealed   bool
 }
 
 func (c *streamCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	n := len(p)
+	if c.sealed {
+		return n, nil
+	}
 	c.written += int64(n)
 	for len(p) > 0 {
 		if !c.headDone {
@@ -235,6 +239,10 @@ func (c *streamCapture) Write(p []byte) (int, error) {
 func (c *streamCapture) finish() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.sealed {
+		return
+	}
+	c.sealed = true
 	if c.written == 0 {
 		return
 	}

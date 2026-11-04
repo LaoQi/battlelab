@@ -6,9 +6,7 @@ type funcDef struct {
 }
 
 func (r *Runner) runSubshell(list *List, io *IO) (int, error) {
-	sub := &Runner{Env: r.Env.Clone(), ShellName: r.ShellName, Ctx: r.Ctx, Exec: r.Exec}
-	sub.IO = io
-	sub.expn = &expansion{env: sub.Env, runs: sub, io: io}
+	sub := r.branch(r.Env.Clone(), io)
 	sub.ErrExit = r.ErrExit
 	sub.funcs = r.funcs
 	code, err := sub.runList(list, io)

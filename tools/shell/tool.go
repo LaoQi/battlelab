@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,8 @@ type Config struct {
 	Workspace func() string
 	Console   Console
 	Programs  []string
+	Vbash     bool
+	Environ   func() []string
 }
 
 type request struct {
@@ -48,6 +51,8 @@ type Tool struct {
 	workspace func() string
 	home      string
 	console   Console
+	vbash     bool
+	environ   func() []string
 	ttyMu     sync.Mutex
 }
 
@@ -64,12 +69,20 @@ func New(cfg Config) (*Tool, error) {
 	if programs == nil {
 		programs = probePrograms(platform.Programs, lookPath)
 	}
+	if cfg.Vbash && p.Kind != KindPosix {
+		return nil, fmt.Errorf(MsgVbashPosixFmt, p.Name)
+	}
+	if cfg.Vbash && cfg.Environ == nil {
+		return nil, errors.New(MsgVbashEnvironFmt)
+	}
 	return &Tool{
 		profile:   p,
 		programs:  programs,
 		workspace: cfg.Workspace,
 		home:      cfg.Home,
 		console:   cfg.Console,
+		vbash:     cfg.Vbash,
+		environ:   cfg.Environ,
 	}, nil
 }
 
@@ -119,6 +132,9 @@ func (t *Tool) run(ctx context.Context, req request) *Result {
 		}
 		return &Result{Command: req.Command, Err: ErrNoLend.Error()}
 	}
+	if t.vbash {
+		return defaultCwd(t.runVbash(ctx, req.Command, timeoutSec, dir), explicit)
+	}
 	return defaultCwd(runForeground(ctx, t.console, req.Command, timeoutSec, t.profile, dir, req.Interactive), explicit)
 }
 
@@ -167,7 +183,18 @@ func (t *Tool) resolveCwd(cwd string) (string, error) {
 }
 
 func (t *Tool) toolDesc() string {
-	return describeShell(platform, t.profile, t.programs)
+	desc := describeShell(platform, t.profile, t.programs)
+	if t.vbash {
+		desc = MsgVbashDesc + desc
+	}
+	return desc
+}
+
+func (t *Tool) environList() []string {
+	if t.environ == nil {
+		return nil
+	}
+	return t.environ()
 }
 
 func describeShell(plat shellPlatform, p *profile, programs []string) string {

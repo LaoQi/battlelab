@@ -208,3 +208,31 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 - **不用 `context` 承载进程事实**：仓库里没有会话级 `ctx`（`repl.Run()` 不收 ctx；ctx 每回合由 `InterruptContext()` 现造、以 `context.Background()` 为根，只承担取消）；读取点之一（cwd 短路径显示）在渲染路径上、手上没有 ctx；`context.Value` 返回 `any` 无编译期保证，且全仓 `context.WithValue` 使用数为 0。结论：ctx 属请求层（取消/超时），进程事实不进 ctx
 - **构造缺项的失败语义**：`Workspace`/`Home` 为空（构造方漏传）时沿用 `MsgBadCwd`（`resolveCwd` 对相对路径与 `~` 分别报错），不新增专用文案、不 panic（§15 第 7 条）
 - **旧 `cwd` 过渡形态已删**：`RunShellResult` 六参 + `base` 参数不复存在，请求形态就是 `shellRequest`（§14）
+
+## 17. 虚拟 bash 接入（S8，2026-11-04）
+
+`run_shell` 增加一条**默认关闭**的实验执行路径：把命令交给进程内的 bash 子集解释器
+（`vbash`）执行，不再起 `bash -c` 子进程。开关与约束：
+
+| 项 | 内容 |
+|---|---|
+| `Config.Vbash` | `true` 启用解释器；默认 `false`，非交互路径走 `Tool.runVbash`（`tools/shell/vbash.go`） |
+| `Config.Environ` | 启用时**必填**（`func() []string`）：`vbash` 是纯库不读 `os.Environ`，外部命令的环境由此注入；缺失在 `New` 期报错 |
+| 非 POSIX shell | `pwsh`/`cmd` 下开启 `Config.Vbash` 在 `New` 期报错——解释器只实现 bash 语法 |
+| `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
+| 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
+| 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」 |
+
+实现要点：
+
+- 复用既有结果管道：`streamCapture` 截断/`waitBounded` 放弃等待/`Result` 字段语义与 `runForeground` 一致；
+  `streamCapture.finish()` 加 `sealed` 标记后幂等，超时放弃后的迟到写入不再改动结果
+- 超时与中断：`waitBounded` 包住 `vbash.RunScript`，解释器内部在 `runList` 每项前检查 `Ctx`，
+  纯内建死循环也能在截止时间退出；外部命令由 `exec.CommandContext` + 注入的 `CancelCmd` 组杀
+- 进程组/树杀策略留在本包：`vbash.Config.ConfigureCmd`/`CancelCmd` 由 `New` 侧注入
+  `platform.ConfigureGroup`/`platform.KillGroup`，因此 Windows 的 `taskkill /T /F` 自动生效，
+  `vbash` 自身不预设平台策略
+- 错误分流：`SyntaxError` 由解释器按 bash 文案写进 stderr（不再重复进 `Err`）；
+  `ExitRequest` 是控制流信号；只有 `UnsupportedError` 与内部错误进 `Result.Err`
+
+用例见 `tools/shell/vbash_test.go`（18 条）；解释器侧语义与基准见 `docs/vbash-impl.md` 的 S8 节。

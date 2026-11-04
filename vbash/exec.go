@@ -1,7 +1,6 @@
 package vbash
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
+	"time"
 )
 
 func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
@@ -93,6 +93,13 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 	cmd.Stdin = io.In
 	cmd.Stdout = io.Out
 	cmd.Stderr = io.Err
+	if r.ConfigureCmd != nil {
+		r.ConfigureCmd(cmd)
+	}
+	if r.CancelCmd != nil {
+		cmd.Cancel = func() error { return r.CancelCmd(cmd) }
+		cmd.WaitDelay = waitDelay
+	}
 	err := cmd.Run()
 	if err == nil {
 		return 0, nil
@@ -127,6 +134,8 @@ func (r *Runner) diagSignal(errw io.Writer, pos Pos, signum int, argv []string) 
 	fmt.Fprintf(errw, "%-26s %s\n", signalName(signum), strings.Join(parts, " "))
 }
 
+const waitDelay = 2 * time.Second
+
 func exitCodeOf(err *exec.ExitError) int {
 	code := err.ExitCode()
 	if code >= 0 {
@@ -145,6 +154,3 @@ func signalNumber(err *exec.ExitError) int {
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
-
-var _ = fmt.Sprintf
-var _ = context.Background
