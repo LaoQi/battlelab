@@ -1,3 +1,12 @@
+## 2026-11-04 docs(vbash): 新增能力清单文档
+
+- **`docs/vbash-capability.md`**（新）：面向使用者的能力清单——定位、开关用法与装配校验、
+  已支持项矩阵（列表/管道/复合命令/函数/分组/重定向/heredoc/展开/算术/内建/`test`/`printf`）、
+  明确不支持的构造（报错不回落）、**与真 bash 的已知差异表**（函数作用域、`for x; do`、
+  `${V:off:len}`、`base#num`、`pipefail`/`nounset`、浮点 `printf`、后台 `&` 等 25 条，逐条实测）、
+  语义细节速查、基准成绩、代码地图、适用场景边界
+- **`docs/vbash-plan.md`**：移除 S6/S8 阶段的「Windows 手动验证」表述（该项由用户自行安排，不落文档）
+
 ## 2026-11-04 feat(shell): S8 接入 vbash——`run_shell` 可走进程内 bash 解释器（默认关闭）
 
 - **开关**：`shell.Config.Vbash`（默认 `false`）+ `Config.Environ`（启用时必填，`vbash` 不读 `os.Environ`）。非 POSIX shell（pwsh/cmd）下开启在 `New` 期报错；`interactive: true` 仍借终端、不经解释器
