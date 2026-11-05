@@ -3,7 +3,6 @@ package vbash
 import (
 	"io"
 	"os"
-	"path"
 	"strings"
 )
 
@@ -68,7 +67,7 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 		} else {
 			flags |= os.O_TRUNC
 		}
-		f, err := os.OpenFile(r.absPath(target), flags, 0o666)
+		f, err := os.OpenFile(r.hostPath(target), flags, 0o666)
 		if err != nil {
 			r.diagf(r.IO.Err, redir.Pos, "%s: %s", target, errText(err))
 			return errRedirectFailed
@@ -87,7 +86,7 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 			io.withWriter(fd, src)
 			return nil
 		}
-		f, err := os.OpenFile(r.absPath(target), os.O_CREATE|os.O_WRONLY, 0o666)
+		f, err := os.OpenFile(r.hostPath(target), os.O_CREATE|os.O_WRONLY, 0o666)
 		if err != nil {
 			r.diagf(r.IO.Err, redir.Pos, "%s: %s", target, errText(err))
 			return errRedirectFailed
@@ -96,11 +95,11 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 		io.withWriter(fd, f)
 		return nil
 	case OpLess:
-		if target == "/dev/null" {
+		if isDevNull(target) {
 			io.In = emptyReader()
 			return nil
 		}
-		f, err := os.Open(r.absPath(target))
+		f, err := os.Open(r.hostPath(target))
 		if err != nil {
 			r.diagf(r.IO.Err, redir.Pos, "%s: %s", target, errText(err))
 			return errRedirectFailed
@@ -127,11 +126,11 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 		default:
 			flags |= os.O_TRUNC
 		}
-		if target == "/dev/null" {
+		if isDevNull(target) {
 			io.withWriter(fd, devNull())
 			return nil
 		}
-		f, err := os.OpenFile(r.absPath(target), flags, 0o666)
+		f, err := os.OpenFile(r.hostPath(target), flags, 0o666)
 		if err != nil {
 			r.diagf(r.IO.Err, redir.Pos, "%s: %s", target, errText(err))
 			return errRedirectFailed
@@ -174,17 +173,6 @@ func (r *Runner) expandHeredoc(body string) (string, error) {
 		i += len(first.Text)
 	}
 	return b.String(), nil
-}
-
-func (r *Runner) absPath(target string) string {
-	if strings.HasPrefix(target, "/") {
-		return path.Clean(target)
-	}
-	dir := r.Env.Dir()
-	if dir == "" {
-		dir = "/"
-	}
-	return path.Clean(dir + "/" + target)
 }
 
 func errText(err error) string {

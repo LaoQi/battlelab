@@ -29,13 +29,9 @@ func (r *Runner) globExpand(text string) []string {
 		base = "."
 	}
 	if r.Env.Dir() != "" {
-		if strings.HasPrefix(base, "/") {
-			base = path.Clean(base)
-		} else {
-			base = path.Clean(r.Env.Dir() + "/" + base)
-		}
+		base = r.posixPath(base)
 	}
-	entries, err := os.ReadDir(base)
+	entries, err := os.ReadDir(plat.ToHost(r.Env.Dir(), base))
 	if err != nil {
 		return []string{text}
 	}
@@ -46,7 +42,7 @@ func (r *Runner) globExpand(text string) []string {
 		if strings.HasPrefix(name, ".") && !dotOK {
 			continue
 		}
-		if matchGlob(file, name) {
+		if plat.MatchName(file, name) {
 			matches = append(matches, dir+name)
 		}
 	}

@@ -9,6 +9,11 @@
 `vbash` 是一个**跨平台的 bash 子集解释器**：同一段命令在 Linux、macOS、Windows 上行为一致，
 不支持的构造**明确报错、绝不静默回落**系统 shell。
 
+> **验证状态（2026-11-05）**：三平台分片（`vbash/platform_{linux,darwin,windows}.go`）已实现，
+> Windows 侧含盘符归一、`;` 分隔 `PATH`、`PATHEXT` 查找、大小写不敏感匹配与退出码映射。
+> 但**只在 Linux 上跑过基准**（198/198）；darwin/windows 目前仅由 `make cross` 保证编译与 vet 通过。
+> 跨平台一致性属「实现完成、待验证」，不要当作已验证结论引用。
+
 一阶段只虚拟解释器本身，**外部程序一律透传**（`cat`/`grep`/`sed`/`git`/`go`… 跑的是用户系统上那个），
 所以它不是 coreutils 的复刻，也不是性能优化项目（实测 200 次 `echo hi`：vbash 0.42s、`bash -c` 0.40s，
 没有可感知差异）。
@@ -32,7 +37,7 @@ tool, err := shell.New(shell.Config{
 |---|---|
 | `Vbash: false`（默认） | 与历史完全一致：`bash -c "$command"` |
 | `Vbash: true` + `Environ` 缺失 | `New` 期报错，不起解释器 |
-| shell 解析为 pwsh / cmd | `New` 期报错（解释器只实现 bash 语法） |
+| shell 解析为 pwsh / cmd | 允许：命令仍按 bash 语法书写（这正是 Windows 上的目标场景）；诊断前缀取 `bash` |
 | `interactive: true` | **不经解释器**，仍借终端直跑（终端所有权属 `ctty`） |
 
 ## 3 能力矩阵
@@ -132,6 +137,26 @@ $ vbashrun -c 'echo $($($(...)))'   # 超过 64 层
 深层输入能把宿主进程撑到内核 OOM killer 出手——`recover()` 拦不住 OOM，只能靠提前拒绝。
 真实脚本实测远低于 10 层，64 层留了充足余量。
 
+### 3.5 跨平台行为（Windows 侧未真机验证）
+
+内部只用一个路径表示：**POSIX `/`**。同一条命令在三平台按同一套规则解析，差异都在边界吸收：
+
+| 写法 | 行为 |
+|---|---|
+| `/c/Users/x` | Windows 上映射到 `C:\Users\x`；Linux/macOS 上就是 `/c/Users/x`（不特殊对待） |
+| `C:/Users/x`、`C:\Users\x` | 仅 Windows 上识别为盘符并归一为 `/c/Users/x`；`\` 在 bash 里本是转义符，所以实际书写请用 `/` |
+| `cd d/x`（相对盘符） | 仅 Windows、且 `D:\` 真实存在时归一为 `/d/x`；否则仍按相对目录处理 |
+| `\\server\share` | 仅 Windows：UNC 路径，原样保留 |
+| `$PATH` | 三平台都是 `:` 分隔（Windows 上 `;` 分隔在内部被归一）；外部程序拿到的仍是宿主形式 |
+| `~/x` | 用注入的 `Home`（`tools/shell.Config.Home`），不读环境变量 |
+| `/dev/null` | 三平台都识别；Windows 另认 `nul`（不区分大小写） |
+| `-x` / 命令查找 | POSIX 看 mode 0111；Windows 看后缀是否在 `.exe .cmd .bat .com` 内（类似 `PATHEXT`） |
+| glob 匹配 | POSIX 大小写敏感；Windows 折成小写（保持宿主行为） |
+| 被信号杀 | POSIX `128+signum`；Windows 取退出码低 8 位，Ctrl-C（`0xC000013A`）记 130 |
+
+宿主 shell 是 pwsh/cmd 时也**允许**开启 vbash——这正是 Windows 上的目标场景，命令仍按 bash 语法书写。
+`interactive: true` 例外：它不经解释器，直接交宿主 shell。
+
 ## 4 语义细节速查
 
 - **`set -e` 三条例外**（与 bash 一致，逐条核对过）：条件上下文（`if`/`while`/`until` 的条件）不触发；
@@ -190,7 +215,7 @@ $ vbashrun -c 'echo $($($(...)))'   # 超过 64 层
 | `builtin.go` `test.go` `strconv.go` | 21 个内建、`test` 运算、数字格式化 |
 | `errexit.go` | `set -e` 判定 |
 | `diag.go` `errors.go` | bash 对齐的诊断文案、`UnsupportedError`/`SyntaxError`/`RuntimeError`/`ExitRequest` |
-| `signal_unix.go` `signal_other.go` | 信号名与退出码（平台白名单分片） |
+| `platform.go` `platform_posix.go` `platform_{linux,darwin,windows}.go` `platform_stub.go` | 平台差异表：路径与盘符归一、`PATH` 分隔、可执行判定、`/dev/null`、信号名与退出码 |
 
 入口三个：`Parse(src) (*List, error)`、`RunScript(ctx, src, cfg) (int, error)`、
 `Run(ctx, src, cfg) (ExecResult, error)`。`Config` 里 `Dir`/`Home`/`Env`/`Args`/`Arg0`/

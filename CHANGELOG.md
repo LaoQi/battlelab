@@ -1,3 +1,30 @@
+## 2026-11-05 feat(vbash): 跨平台归一落地（Windows 分片实现）
+
+- **背景**：规划 §5 与 D3 把「跨平台归一」列为核心价值，但 `vbash/` 下实际没有任何平台分片：
+  路径全程 `path.Clean` + 直接 `os.Stat`（假设宿主就是 POSIX）、`/dev/null` 是字符串比较、
+  信号表散在 `signal_unix.go`/`signal_other.go`、`tools/shell` 还**拒绝**在非 POSIX 宿主上启用 vbash
+  ——即 Windows 上特性根本开不起来
+- **`vbash/platform.go`（新）**：`platformOps` 差异表 + 归一原语
+  （`posixPath`/`hostPath`/`hostDir`/`isPathLike`/`isDevNull`/`resolveSymlinks`）。
+  内部只有一个表示：**POSIX `/`**，只在文件系统调用与 `exec`（`cmd.Dir`、`argv[0]`）两个边界转宿主形式
+- **平台白名单分片（新）**：`platform_linux.go` / `platform_darwin.go` 取 `posixPlatform()`，
+  `platform_windows.go` 自带实现，`platform_posix.go` 放 linux||darwin 共享，其余落 `platform_stub.go`；
+  删除 `signal_unix.go`/`signal_other.go`（被表取代）
+- **Windows 侧**：`C:\x` ↔ `/c/x` 盘符归一（Git-Bash 惯例，`cd d/x` 等价 `/d/x`）、UNC 保留、
+  `PATH` 内部 `:` 分隔而宿主 `;`、`PATHEXT` 式后缀查找（已带后缀不重复追加）、
+  glob 大小写不敏感、退出码取低 8 位且 `0xC000013A`（Ctrl-C）记 130
+- **`vbash/env.go`**：`hostVar`/`internalVar` 让 `HOME`/`PWD`/`OLDPWD` 内部存 POSIX 形式、`Env.Environ`
+  出口转回宿主形式；`Runner` 入口归一 `Config.Dir`/`Home`/`Env`，调用方仍传原生路径
+- **`tools/shell`**：**去掉「启用 vbash 要求宿主 shell 是 POSIX」的装配期拒绝**——拒绝等于特性在 Windows
+  上不可用，与 D1 直接矛盾；非 POSIX 宿主上的描述改走 `describeVbash`（提示 `/` 分隔、`/c/` 盘符、
+  `\` 只作转义），诊断前缀取 `bash` 不再出现 `pwsh.exe`
+- **顺带修既有缺陷**：路径型命令不存在时退出码原为 1，改为 127（不存在）/126（不可执行）并补诊断，对齐 bash
+- **验证**：`go build`/`vet`/`test`/`test -race`/`make cross` 全绿；`make vbash-check` **198/198**
+  （POSIX 侧归一是恒等变换，语义未变）。**Windows/macOS 真机基准未跑**，文档一律标「实现完成、待验证」
+- **文档**：`docs/vbash-plan.md` §5.4 新增分片落点表、S6 标完成并加未验证说明；
+  `docs/vbash-impl.md` 新增 S6 节（6 条偏差）；`docs/vbash-capability.md` 新增 §3.5 跨平台行为、
+  更新 §2 约束表与代码地图
+
 ## 2026-11-04 fix(vbash): 空引号参数被丢弃，导致参数个数与位置错位
 
 - **症状**：`f ""` 传入 0 个参数（bash 是 1 个）；`[ -n "" ]` 判为真（bash 为假）；

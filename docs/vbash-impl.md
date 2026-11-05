@@ -109,6 +109,59 @@
 - 新增执行层用例：`for`/`while`/`if`-`elif`-`else`/`break`(含深度)/`continue`/子 shell/分组/
   函数(返回码、`local`、`$1`)/`set -e`(五种链式组合 + 条件上下文)/嵌套控制流/`while read`
 
+## S6 跨平台归一（2026-11-05）
+
+### 产出
+
+| 文件 | 内容 |
+|---|---|
+| `vbash/platform.go`（新） | `platformOps` 差异表 + `fillPlatform` 缺省值；`absInternal`/`posixPath`/`hostPath`/`hostDir`/`isPathLike`/`isDevNull`/`resolveSymlinks` 六个归一原语 |
+| `vbash/platform_posix.go`（新） | `posixPlatform()`：`/dev/null`、POSIX 默认 `PATH`、mode&0111、`WaitStatus` 信号退出码与信号名 |
+| `vbash/platform_linux.go` / `_darwin.go`（新） | 白名单装配（`var plat = fillPlatform(posixPlatform())`） |
+| `vbash/platform_windows.go`（新） | 盘符与 `\\server\share` 归一、`;` 分隔的 `PATH`、`PATHEXT` 式后缀查找、大小写不敏感匹配、退出码低 8 位与 `0xC000013A`→130 |
+| `vbash/platform_stub.go`（新） | 其余平台落空表（`make cross` 拦漏标） |
+| `vbash/signal_unix.go` / `signal_other.go`（删） | 被 `platformOps` 取代，信号面只留一份 |
+| `vbash/env.go` | `hostVar`/`internalVar`：`HOME`/`PWD`/`OLDPWD` 存 POSIX 形式，`PATH` 内部一律 `:` 分隔，`Environ` 出口转回宿主形式 |
+| `tools/shell/tool.go` | 去掉「启用 vbash 要求宿主 shell 是 POSIX」的装配期拒绝；非 POSIX 宿主上的描述改走 `describeVbash` |
+| `tools/shell/vbash.go` | `Arg0`/`ShellName` 在非 POSIX 宿主上取 `bash`（诊断前缀，不再出现 `pwsh.exe`） |
+
+### 实现要点
+
+- **内部只用一个表示：POSIX `/`**。语法层、展开层、`glob`、`test`、重定向目标全程按 `/` 处理，
+  只在两类边界转成宿主形式：文件系统调用（`os.Stat`/`Open`/`ReadDir`/`Readlink`）与 `exec`（`cmd.Dir`、`argv[0]`）。
+- **盘符按 Git-Bash 惯例**：`C:\x` ↔ `/c/x`；UNC `\\server\share` 保留不动。
+  `PATH` 里的条目同样归一，因此 `$PATH` 在三平台都是 `:` 分隔。
+- **`/dev/null` 走映射而非字符串比较**：`isDevNull` 按表匹配（Windows 额外认 `nul`、不区分大小写）。
+  重定向命中时写端走内部 `discard` 汇、读端走空 `Reader`，不产生文件句柄；若目标经展开后落到
+  `/dev/null`（如 `test -e "$X"`），`hostPath` 再兜一层映射到 `os.DevNull`，避免拼出宿主上不存在的路径。
+- **`-x`/可执行判定按平台**：POSIX 看 mode，Windows 看后缀是否在 `PATHEXT` 清单内；
+  `lookPath` 在候选名已带后缀时不再追加，避免 `git.exe.exe`。
+- **退出码统一在表里**：Windows 的 `ExitCode` 取低 8 位（与 bash 的 `$?` 截断一致），
+  Ctrl-C 的 `0xC000013A` 记 130；POSIX 保留 `128+signum` 并继续输出 `<Signal> <command>` 诊断行。
+- **`RunScript` 入口归一注入值**：`Config.Dir`/`Config.Home`/`Config.Env` 在 `NewRunner` 里就转成内部形式，
+  调用方（`tools/shell`）继续传宿主原生路径即可，不需要知道内部表示。
+- **装配期不再拒绝非 POSIX 宿主**：这正是本特性的目标场景（Windows 只有 pwsh/cmd）；
+  描述文案改为提示 bash 写法（`/` 分隔、`/c/` 盘符、`\` 只作转义）。
+
+### 与规划的偏差与自定决策
+
+| # | 情况 | 处理 | 理由 |
+|---|---|---|---|
+| S6-1 | 规划 §6 要求 `vbash/platform_{linux,darwin,windows}.go` 三分片 | 增补 `platform_posix.go`（linux\|darwin 共享）与 `platform_stub.go`，共五文件 | 与库内 `tools/shell/platform*.go` 的既有约定一致（posix 共享实现 + 三装配 + stub） |
+| S6-2 | 规划未定义宿主路径到内部表示的具体形式 | 采用 Git-Bash 的 `/c/x` 而非 `C:/x` | 与语料里实际出现的写法一致（模型在 Windows 上本来就照 Git-Bash 写）；`C:/x` 仍可作输入 |
+| S6-3 | 规划 §5.2 要求「参数中遇 NUL 报错」 | 未实现，`$'a\0b'` 仍产出字面量 `a\0b` | 现实现的 `$'…'` 只认单字节转义，`\0` 不在其表内；`os/exec` 遇 NUL 由内核拒绝（`invalid argument`），已在 `spawn` 归为普通失败。留作后续 |
+| S6-4 | 规划未提「非 POSIX 宿主能否启用 vbash」 | 放开 `New` 的装配期拒绝，改由描述文案指引写法 | 拒绝等于特性在 Windows 上不可用，与 D1 直接矛盾 |
+| S6-5 | 规划未提大小写不敏感的文件名匹配 | Windows 上 `glob` 折小写比较 | 「保持宿主行为」（§5.1 末行）的落地方式 |
+| S6-6 | 路径型命令不存在时的退出码原为 1 | 改为 127（不存在）/126（不可执行），并补 diag | bash 如此；原行为属既有缺陷，归一过程顺带修正 |
+| S6-7 | 规划未提「`a/b` 是盘符还是相对目录」 | `a/b` 仅当 `A:\` 真实存在才当盘符 | 无条件当盘符会把 Windows 上的相对目录 `a/b` 解析到错误位置，且失败后难排查 |
+
+### 验收
+
+- `go build ./... && go vet ./... && go test ./... && go test -race ./...` 全绿
+- `make cross`（darwin/windows 的 vet + 逐包测试编译）OK
+- `make vbash-check` **198/198**（Linux 侧语义未变，跨平台归一对 POSIX 是恒等变换）
+- **未验证项**：Windows/macOS 真机基准未跑（当前环境只有 Linux），故文档一律标「实现完成、待验证」
+
 ## S3 执行层（2026-11-04）
 
 ### 产出

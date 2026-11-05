@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"io"
 	"os"
-	"path"
 	"strings"
 )
 
@@ -542,20 +541,17 @@ func builtinCd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 		newDir = old
 		io.WriteString(io.Out, r.Env.Dir()+"\n")
 	default:
-		if !strings.HasPrefix(target, "/") {
-			target = r.Env.Dir() + "/" + target
-		}
-		newDir = path.Clean(target)
+		newDir = r.posixPath(target)
 	}
 	if physical {
-		if resolved, err := resolveSymlinks(newDir); err == nil {
+		if resolved, err := resolveSymlinks(r.Env.Dir(), newDir); err == nil {
 			newDir = resolved
 		}
 	}
 	if args != nil && len(args) > 0 && args[0] == "-" {
 		shown = newDir
 	}
-	st, err := os.Stat(newDir)
+	st, err := os.Stat(plat.ToHost(r.Env.Dir(), newDir))
 	if err != nil {
 		r.diagfName(io.Err, pos, "cd", "%s: %s", shown, errText(err))
 		return 1, nil
@@ -571,34 +567,6 @@ func builtinCd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	return 0, nil
 }
 
-func resolveSymlinks(p string) (string, error) {
-	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	cur := "/"
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		cur = path.Join(cur, part)
-		st, err := os.Lstat(cur)
-		if err != nil {
-			return p, err
-		}
-		if st.Mode()&os.ModeSymlink == 0 {
-			continue
-		}
-		target, err := os.Readlink(cur)
-		if err != nil {
-			return p, err
-		}
-		if strings.HasPrefix(target, "/") {
-			cur = target
-			continue
-		}
-		cur = path.Join(path.Dir(cur), target)
-	}
-	return path.Clean(cur), nil
-}
-
 func builtinPwd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	physical := false
 	for _, a := range argv[1:] {
@@ -608,7 +576,7 @@ func builtinPwd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	}
 	dir := r.Env.Dir()
 	if physical {
-		if resolved, err := resolveSymlinks(dir); err == nil {
+		if resolved, err := resolveSymlinks(dir, dir); err == nil {
 			dir = resolved
 		}
 	}

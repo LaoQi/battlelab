@@ -64,32 +64,33 @@ func unaryTest(r *Runner, op, arg string) (bool, error) {
 	case "-n":
 		return arg != "", nil
 	case "-e", "-a":
-		_, err := os.Stat(r.absPath(arg))
+		_, err := os.Stat(r.hostPath(arg))
 		return err == nil, nil
 	case "-f":
-		st, err := os.Stat(r.absPath(arg))
+		st, err := os.Stat(r.hostPath(arg))
 		return err == nil && st.Mode().IsRegular(), nil
 	case "-d":
-		st, err := os.Stat(r.absPath(arg))
+		st, err := os.Stat(r.hostPath(arg))
 		return err == nil && st.IsDir(), nil
 	case "-s":
-		st, err := os.Stat(r.absPath(arg))
+		st, err := os.Stat(r.hostPath(arg))
 		return err == nil && st.Size() > 0, nil
 	case "-r":
-		f, err := os.Open(r.absPath(arg))
+		f, err := os.Open(r.hostPath(arg))
 		if err != nil {
 			return false, nil
 		}
 		f.Close()
 		return true, nil
 	case "-w":
-		st, err := os.Stat(r.absPath(arg))
+		st, err := os.Stat(r.hostPath(arg))
 		return err == nil && st.Mode().Perm()&0o222 != 0, nil
 	case "-x":
-		st, err := os.Stat(r.absPath(arg))
-		return err == nil && st.Mode().Perm()&0o111 != 0, nil
+		host := r.hostPath(arg)
+		st, err := os.Stat(host)
+		return err == nil && plat.IsExec(host, st), nil
 	case "-L", "-h":
-		st, err := os.Lstat(r.absPath(arg))
+		st, err := os.Lstat(r.hostPath(arg))
 		return err == nil && st.Mode()&os.ModeSymlink != 0, nil
 	}
 	return false, runtimeErrf(Pos{}, "%s: unary operator expected", op)

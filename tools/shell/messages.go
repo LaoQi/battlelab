@@ -21,6 +21,5 @@ const (
 	MsgTruncMiddle         = "[%s 中间截断 %d 字节]"
 	MsgTruncTail           = "[%s 截断 %d 字节]"
 	MsgVbashDesc           = "命令由内置 bash 解释器执行（实验特性，不支持的构造直接报错、不回落系统 shell）。"
-	MsgVbashPosixFmt       = "配置的 shell %q 不是 POSIX shell，无法启用内置 bash 解释器（vbash）"
 	MsgVbashEnvironFmt     = "启用内置 bash 解释器（vbash）需同时注入 Environ，否则外部命令拿不到环境变量"
 )

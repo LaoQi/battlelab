@@ -10,6 +10,10 @@
 
 同一段命令在 Linux、macOS、Windows 上应当**行为一致**。今天的断点：
 
+> **S6 跨平台归一的状态（2026-11-05）**：三平台分片 `vbash/platform_{linux,darwin,windows}.go`
+> 与 stub 已落地，Windows 侧实现完整但**未在 Windows 真机验证**（`make cross` 只保证编译通过）。
+> 下方 §5 的表格是设计与实现口径，验证状态见 §8 的 S6 行。
+
 | 平台 | 现状 | 断在哪 |
 |---|---|---|
 | Linux/macOS | `bash -c`（`posixCandidates`） | 无 |
@@ -167,6 +171,28 @@
 | `/dev/null` | 内部识别，映射到 `os.DevNull`（Windows = `NUL`） |
 | stdin 非 tty | 与现状一致：普通命令 stdin 为空设备；`interactive: true` 才借终端 |
 
+### 5.4 分片落点（S6 实施口径）
+
+平台差异全部收敛进 `vbash/platform.go` 的一张表 `platformOps`，三个白名单分片填值：
+`platform_linux.go` / `platform_darwin.go` 取 `posixPlatform()`，`platform_windows.go` 自带实现，
+其余平台落 `platform_stub.go`（`make cross` 拦漏标）。
+
+| 表项 | posix | windows |
+|---|---|---|
+| `FromHost` | 恒等 | `C:\x` → `/c/x`、`\\server\share` 保留、`\` → `/` |
+| `DriveOf` | 未设（`a/b` 就是目录） | `a/b` 当盘符仅当 `A:\` 真实存在 |
+| `ToHost` | 恒等 | `/c/x` → `C:\x`、`//server/share` → `\\server\share` |
+| `PathSep` / `DefaultPath` | `:` / POSIX 默认 | `;` / `/c/Windows/system32:/c/Windows`（内部形式） |
+| `ExecSuffixes` | `""` | `.exe .cmd .bat .com ""`（已带后缀则不追加） |
+| `IsExec` | mode&0111 | 非目录且后缀在清单内 |
+| `MatchName` | 大小写敏感 | 折成小写（宿主行为） |
+| `Argv0` | 恒等 | 带 `/` 时转宿主形式 |
+| `ExitCode` / `SignalName` | `WaitStatus` 的 signal | 退出码取低 8 位、`0xC000013A`（Ctrl-C）记 130 |
+| `DevNull` | `/dev/null` | `/dev/null`、`nul`（不区分大小写） |
+
+内部变量表也按此归一：`HOME`/`PWD`/`OLDPWD` 存 POSIX 形式、`PATH` 内部一律 `:` 分隔，
+`exec` 边界再转回宿主形式（`Env.Environ`）。
+
 ## 6 架构与接缝
 
 ```
@@ -189,7 +215,8 @@ run_shell(command)
 - 虚拟层失败（`ErrUnsupported` / 内部错误）**直接报错，不回落真 shell**：本特性是实验性质，
   不追求完备支持；静默回落会掩盖解释器缺陷、让"跨平台一致"的目标失去可观测性
 - `interactive: true` **不走虚拟层**，直接交宿主 shell（终端所有权是 `ctty` 的事）
-- 平台分片：`vbash/platform_linux.go` / `_darwin.go` / `_windows.go` + stub（D3）
+- 平台分片：`vbash/platform_linux.go` / `_darwin.go` / `_windows.go` + stub（D3）；
+  差异表与归一规则见 §5.4
 
 ## 7 基准与文档的既存矛盾（必须先解决）
 
@@ -223,11 +250,14 @@ run_shell(command)
 | **S3** | 执行层：内建最小集 + 外部透传 + 退出码 + 管道 | `T0=100, T1=100` | 中 |
 | **S4** | heredoc 精确配对（栈式、多终止符、`<<-`） | `T3h≥90`、`C=100` | 中 |
 | **S5** | 展开：变量、`${...}`、`$(...)`、`~`、glob、`$(( ))` | `T2≥95` | 大 |
-| **S6** | 跨平台归一：路径、编码、`/dev/null`、信号退出码 | `X=100` | 中 |
+| **S6** ✅ | 跨平台归一：路径、编码、`/dev/null`、信号退出码 | `X=100` | 中 |
 | **S7** | 控制流：`for`/`if`/`( )`/`{ ; }`/`exit`/`set -e` | `T3c` 从 0 提到 ≥80% | 大 |
 | **S8** ✅ | 接入 `tools/shell`：`Config.Vbash`（默认关闭）+ `Config.Environ`，进程内执行 | 全量 193 条 + 现有 Go 测试全绿 | 小 |
 
 **一阶段完成状态**：S1–S8 全部完成（偏差见 `docs/vbash-impl.md` 各节）。
+**验证状态**：Linux 侧由 `make vbash-check`（198/198）守护；darwin/windows 仅由 `make cross`
+保证编译与 vet 通过，**未在真机跑过基准**——跨平台一致性目前是**实现完成、待验证**，
+不应当被引用为已证实结论。
 原始完成定义：S1–S6 完成，`T0=100, T1=100, T2≥95, T3h≥90, C=100, X=100`，
 且 Linux/macOS/Windows 三平台同一命令产出相同 stdout/退出码。
 

@@ -123,14 +123,52 @@ func (e *Env) Environ() []string {
 		if !v.Exported || name == "IFS" {
 			continue
 		}
-		out = append(out, name+"="+v.Value)
+		out = append(out, name+"="+hostVar(name, v.Value))
 		seen[name] = true
 	}
 	if !seen["PWD"] {
-		out = append(out, "PWD="+e.dir)
+		out = append(out, "PWD="+hostVar("PWD", e.dir))
 	}
 	sort.Strings(out)
 	return out
+}
+
+var pathVars = map[string]bool{"HOME": true, "PWD": true, "OLDPWD": true}
+
+func hostVar(name, value string) string {
+	switch {
+	case name == "PATH":
+		return hostPathList(value)
+	case pathVars[name]:
+		return plat.ToHost(plat.FromHost(value), plat.FromHost(value))
+	}
+	return value
+}
+
+func internalVar(name, value string) string {
+	switch {
+	case name == "PATH":
+		return internalPathList(value)
+	case pathVars[name]:
+		return plat.FromHost(value)
+	}
+	return value
+}
+
+func internalPathList(value string) string {
+	parts := strings.Split(value, plat.PathSep)
+	for i, part := range parts {
+		parts[i] = plat.FromHost(part)
+	}
+	return strings.Join(parts, ":")
+}
+
+func hostPathList(value string) string {
+	parts := strings.Split(value, ":")
+	for i, part := range parts {
+		parts[i] = plat.ToHost("", part)
+	}
+	return strings.Join(parts, plat.PathSep)
 }
 
 func (e *Env) markLocal(name string) {

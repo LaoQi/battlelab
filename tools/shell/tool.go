@@ -69,9 +69,6 @@ func New(cfg Config) (*Tool, error) {
 	if programs == nil {
 		programs = probePrograms(platform.Programs, lookPath)
 	}
-	if cfg.Vbash && p.Kind != KindPosix {
-		return nil, fmt.Errorf(MsgVbashPosixFmt, p.Name)
-	}
 	if cfg.Vbash && cfg.Environ == nil {
 		return nil, errors.New(MsgVbashEnvironFmt)
 	}
@@ -185,6 +182,9 @@ func (t *Tool) resolveCwd(cwd string) (string, error) {
 func (t *Tool) toolDesc() string {
 	desc := describeShell(platform, t.profile, t.programs)
 	if t.vbash {
+		if t.profile.Kind != KindPosix {
+			desc = describeVbash(platform, t.programs)
+		}
 		desc = MsgVbashDesc + desc
 	}
 	return desc
@@ -202,6 +202,18 @@ func describeShell(plat shellPlatform, p *profile, programs []string) string {
 	fmt.Fprintf(&b, "在 %s %s 中执行命令（%s），返回 stdout/stderr/退出码。", plat.GOOS, p.Name, shellSyntaxHint(p.Kind))
 	b.WriteString("默认在当前工作区下执行，无需 cd 进入项目；需要其它目录时用 cwd 参数，不必写 cd 前缀。")
 	b.WriteString(plat.Capabilities(p))
+	b.WriteString("读文件、搜索、文本处理等系统操作都用它。")
+	if len(programs) > 0 {
+		b.WriteString("可用程序: " + strings.Join(programs, ", "))
+	}
+	return b.String()
+}
+
+func describeVbash(plat shellPlatform, programs []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "在 %s 内置 bash 解释器中执行命令（shell 语法），返回 stdout/stderr/退出码。", plat.GOOS)
+	b.WriteString("默认在当前工作区下执行，无需 cd 进入项目；需要其它目录时用 cwd 参数，不必写 cd 前缀。")
+	b.WriteString("命令按 bash 写法书写：路径统一用 / 分隔，盘符写作 /c/ 形式（c:/ 亦可），反斜杠只作转义符；解释器在调用外部程序时自动转换成宿主形式。")
 	b.WriteString("读文件、搜索、文本处理等系统操作都用它。")
 	if len(programs) > 0 {
 		b.WriteString("可用程序: " + strings.Join(programs, ", "))

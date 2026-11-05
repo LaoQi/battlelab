@@ -76,8 +76,8 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 		ctx = context.Background()
 	}
 	env := NewEnv()
-	env.home = cfg.Home
-	env.dir = cfg.Dir
+	env.home = plat.FromHost(cfg.Home)
+	env.dir = plat.FromHost(cfg.Dir)
 	env.arg0 = cfg.Arg0
 	if env.arg0 == "" {
 		env.arg0 = "bash"
@@ -87,7 +87,7 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 	}
 	for _, kv := range cfg.Env {
 		if i := strings.IndexByte(kv, '='); i > 0 {
-			env.SetExported(kv[:i], kv[i+1:])
+			env.SetExported(kv[:i], internalVar(kv[:i], kv[i+1:]))
 		}
 	}
 	name := cfg.ShellName

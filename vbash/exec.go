@@ -6,25 +6,33 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"strings"
 	"time"
 )
 
 func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
 	name := argv[0]
-	if strings.Contains(name, "/") {
-		full := r.absPath(name)
-		if st, err := os.Stat(full); err == nil && st.IsDir() {
+	if isPathLike(name) {
+		host := r.hostPath(name)
+		st, err := os.Stat(host)
+		if err == nil && st.IsDir() {
 			r.diagf(io.Err, pos, "%s: Is a directory", name)
 			return 126, nil
 		}
-		if _, err := os.Stat(full); err == nil {
-			if err := checkExecutable(full); err != nil {
-				r.diagf(io.Err, pos, "%s: %s", name, err.Error())
+		if err == nil {
+			if !plat.IsExec(host, st) {
+				r.diagf(io.Err, pos, "%s: Permission denied", name)
 				return 126, nil
 			}
-			return r.spawn(full, argv, io, pos)
+			return r.spawn(host, argv, io, pos)
+		}
+		if os.IsNotExist(err) {
+			r.diagf(io.Err, pos, "%s: No such file or directory", name)
+			return 127, nil
+		}
+		if os.IsPermission(err) {
+			r.diagf(io.Err, pos, "%s: Permission denied", name)
+			return 126, nil
 		}
 	}
 	resolved, err := r.lookPath(name)
@@ -35,47 +43,53 @@ func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
 	return r.spawn(resolved, argv, io, pos)
 }
 
-func checkExecutable(full string) error {
-	st, err := os.Stat(full)
-	if err != nil {
-		return errors.New(errText(err))
-	}
-	if st.IsDir() {
-		return errors.New("Is a directory")
-	}
-	if st.Mode()&0o111 == 0 {
-		return errors.New("Permission denied")
-	}
-	return nil
-}
-
 func (r *Runner) lookPath(name string) (string, error) {
 	if r.Exec != nil {
 		return name, nil
 	}
-	if strings.Contains(name, "/") {
-		return r.absPath(name), nil
+	if isPathLike(name) {
+		host := r.hostPath(name)
+		st, err := os.Stat(host)
+		if err != nil {
+			return "", err
+		}
+		if !plat.IsExec(host, st) {
+			return "", os.ErrPermission
+		}
+		return host, nil
 	}
 	pathVar, ok := r.Env.Lookup("PATH")
 	if !ok {
-		pathVar = "/usr/local/bin:/usr/bin:/bin"
+		pathVar = plat.DefaultPath
+	}
+	names := plat.ExecSuffixes
+	if hasAnySuffix(name, names) {
+		names = []string{""}
 	}
 	for _, dir := range strings.Split(pathVar, ":") {
 		if dir == "" {
 			dir = "."
 		}
-		candidate := dir
-		if !strings.HasPrefix(dir, "/") {
-			candidate = r.absPath(dir)
+		for _, suffix := range names {
+			full := plat.ToHost(r.Env.Dir(), absInternal(r.Env.Dir(), dir+"/"+name+suffix))
+			st, err := os.Stat(full)
+			if err != nil || !plat.IsExec(full, st) {
+				continue
+			}
+			return full, nil
 		}
-		full := path.Join(candidate, name)
-		st, err := os.Stat(full)
-		if err != nil || st.IsDir() || st.Mode()&0o111 == 0 {
-			continue
-		}
-		return full, nil
 	}
 	return "", os.ErrNotExist
+}
+
+func hasAnySuffix(name string, suffixes []string) bool {
+	lower := strings.ToLower(name)
+	for _, s := range suffixes {
+		if s != "" && strings.HasSuffix(lower, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error) {
@@ -87,8 +101,8 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 		return code, nil
 	}
 	cmd := exec.CommandContext(r.Ctx, full, argv[1:]...)
-	cmd.Args[0] = argv[0]
-	cmd.Dir = r.Env.Dir()
+	cmd.Args[0] = plat.Argv0(argv[0])
+	cmd.Dir = r.hostDir()
 	cmd.Env = r.Env.Environ()
 	cmd.Stdin = io.In
 	cmd.Stdout = io.Out
@@ -106,7 +120,7 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		code := exitCodeOf(exitErr)
+		code := plat.ExitCode(exitErr)
 		if code > 128 {
 			r.diagSignal(io.Err, pos, code-128, argv)
 		}
@@ -131,25 +145,10 @@ func (r *Runner) diagSignal(errw io.Writer, pos Pos, signum int, argv []string) 
 		}
 		parts = append(parts, a)
 	}
-	fmt.Fprintf(errw, "%-26s %s\n", signalName(signum), strings.Join(parts, " "))
+	fmt.Fprintf(errw, "%-26s %s\n", plat.SignalName(signum), strings.Join(parts, " "))
 }
 
 const waitDelay = 2 * time.Second
-
-func exitCodeOf(err *exec.ExitError) int {
-	code := err.ExitCode()
-	if code >= 0 {
-		return code
-	}
-	if status, ok := err.Sys().(interface{ Signal() os.Signal }); ok {
-		_ = status
-	}
-	return 128 + signalNumber(err)
-}
-
-func signalNumber(err *exec.ExitError) int {
-	return sysSignalNumber(err)
-}
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

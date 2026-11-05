@@ -29,11 +29,11 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 		Dir:          dir,
 		Home:         t.homeDir(),
 		Env:          t.environList(),
-		Arg0:         filepath.Base(t.profile.Path),
+		Arg0:         vbashArg0(t.profile),
 		Stdout:       &stdout,
 		Stderr:       &stderr,
 		Stdin:        strings.NewReader(""),
-		ShellName:    t.profile.Path,
+		ShellName:    vbashShellName(t.profile),
 		ConfigureCmd: platform.ConfigureGroup,
 		CancelCmd:    platform.KillGroup,
 	}
@@ -72,6 +72,20 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 	res.ExitCode = code
 	t.classifyVbashError(res, &stderr, runErr)
 	return res
+}
+
+func vbashArg0(p *profile) string {
+	if p.Kind == KindPosix {
+		return filepath.Base(p.Path)
+	}
+	return "bash"
+}
+
+func vbashShellName(p *profile) string {
+	if p.Kind == KindPosix {
+		return p.Path
+	}
+	return "bash"
 }
 
 func (t *Tool) classifyVbashError(res *Result, stderr *streamCapture, err error) {

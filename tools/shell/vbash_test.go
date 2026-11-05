@@ -194,9 +194,20 @@ func TestVbashInteractiveBypasses(t *testing.T) {
 	}
 }
 
-func TestVbashConfigRejectsNonPosixShell(t *testing.T) {
-	if _, err := New(Config{LookPath: lookPathStub("pwsh"), Vbash: true, Environ: os.Environ}); err == nil {
-		t.Fatal("非 POSIX shell 应拒绝启用 vbash")
+func TestVbashConfigAcceptsNonPosixShell(t *testing.T) {
+	tool, err := New(Config{Override: "pwsh", LookPath: lookPathStub("pwsh"), Vbash: true, Environ: os.Environ, Programs: []string{}})
+	if err != nil {
+		t.Fatalf("非 POSIX shell 上启用 vbash 应被接受（跨平台归一是本特性目标）: %v", err)
+	}
+	desc := tool.toolDesc()
+	if !strings.Contains(desc, "内置 bash 解释器") {
+		t.Errorf("描述应说明由内置解释器执行: %q", desc)
+	}
+	if strings.Contains(desc, "PowerShell 语法") {
+		t.Errorf("启用 vbash 后描述不应再声称 PowerShell 语法: %q", desc)
+	}
+	if !strings.Contains(desc, "盘符写作 /c/ 形式") {
+		t.Errorf("非 POSIX 宿主上描述应给出路径写法提示: %q", desc)
 	}
 }
 
