@@ -44,7 +44,7 @@ func fillPlatform(p platformOps) platformOps {
 		p.ToHost = func(_, target string) string { return target }
 	}
 	if p.IsExec == nil {
-		p.IsExec = func(_ string, st os.FileInfo) bool { return st.Mode()&0o111 != 0 }
+		p.IsExec = func(_ string, st os.FileInfo) bool { return !st.IsDir() && st.Mode()&0o111 != 0 }
 	}
 	if p.Argv0 == nil {
 		p.Argv0 = identityPath

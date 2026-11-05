@@ -70,3 +70,26 @@ func TestRunningPathNotExecutable(t *testing.T) {
 		t.Errorf("不可执行的常规文件应记 126，输出 %q（stderr=%q）", got.stdout, got.stderr)
 	}
 }
+
+func TestLookPathSkipsDirectory(t *testing.T) {
+	dir := tempDir(t)
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(bin, "probe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(dir, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(real, "probe")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runScript(t, dir, `PATH=`+bin+`:`+real+`; probe`)
+	if got.stdout != "hi\n" {
+		t.Errorf("同名目录不应抢占 PATH 查找，输出 %q（stderr=%q）", got.stdout, got.stderr)
+	}
+}

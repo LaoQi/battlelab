@@ -10,7 +10,7 @@
 - **平台白名单分片（新）**：`platform_linux.go` / `platform_darwin.go` 取 `posixPlatform()`，
   `platform_windows.go` 自带实现，`platform_posix.go` 放 linux||darwin 共享，其余落 `platform_stub.go`；
   删除 `signal_unix.go`/`signal_other.go`（被表取代）
-- **Windows 侧**：`C:\x` ↔ `/c/x` 盘符归一（Git-Bash 惯例，`cd d/x` 等价 `/d/x`）、UNC 保留、
+- **Windows 侧**：`C:\x` ↔ `/c/x` 盘符归一（Git-Bash 惯例；`d/x` 仅在 `D:\` 存在时当盘符）、UNC 保留、
   `PATH` 内部 `:` 分隔而宿主 `;`、`PATHEXT` 式后缀查找（已带后缀不重复追加）、
   glob 大小写不敏感、退出码取低 8 位且 `0xC000013A`（Ctrl-C）记 130
 - **`vbash/env.go`**：`hostVar`/`internalVar` 让 `HOME`/`PWD`/`OLDPWD` 内部存 POSIX 形式、`Env.Environ`
@@ -19,8 +19,14 @@
   上不可用，与 D1 直接矛盾；非 POSIX 宿主上的描述改走 `describeVbash`（提示 `/` 分隔、`/c/` 盘符、
   `\` 只作转义），诊断前缀取 `bash` 不再出现 `pwsh.exe`
 - **顺带修既有缺陷**：路径型命令不存在时退出码原为 1，改为 127（不存在）/126（不可执行）并补诊断，对齐 bash
-- **验证**：`go build`/`vet`/`test`/`test -race`/`make cross` 全绿；`make vbash-check` **198/198**
+- **修本轮引入的回归**：`IsExec` 首版只查 `mode&0111`，而目录的 0755 也满足，`PATH` 中同名目录会被当成
+  可执行文件选中（基准 `C/029` 报 `cp: Permission denied`），现要求 `!st.IsDir()`；
+  新增 `TestLookPathSkipsDirectory`（已确认修复前失败、修复后通过）
+- **验证**：`go build`/`vet`/`test`/`test -race`/`make cross` 全绿；
+  `make vbash-check`（真 bash 录 golden）与 `make vbash-self`（跑 vbash 适配器）均 **198/198**
   （POSIX 侧归一是恒等变换，语义未变）。**Windows/macOS 真机基准未跑**，文档一律标「实现完成、待验证」
+- **口径提醒**：`make vbash-check` 只校验用例与真 bash 一致，**不测 vbash 本体**；被测实现的回归只有
+  `make vbash-self` 会发现——本轮那条 `PATH` 目录回归就是靠它才暴露
 - **文档**：`docs/vbash-plan.md` §5.4 新增分片落点表、S6 标完成并加未验证说明；
   `docs/vbash-impl.md` 新增 S6 节（6 条偏差）；`docs/vbash-capability.md` 新增 §3.5 跨平台行为、
   更新 §2 约束表与代码地图

@@ -15,7 +15,7 @@ func posixPlatform() platformOps {
 		PathSep:      ":",
 		ExecSuffixes: []string{""},
 		Argv0:        identityPath,
-		IsExec:       func(_ string, st os.FileInfo) bool { return st.Mode()&0o111 != 0 },
+		IsExec:       func(_ string, st os.FileInfo) bool { return !st.IsDir() && st.Mode()&0o111 != 0 },
 		SignalNumber: posixSignalNumber,
 		ExitCode:     posixExitCode,
 		SignalName:   posixSignalName,
