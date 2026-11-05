@@ -55,3 +55,9 @@ make vbash-check                        # 虚拟 bash 基准自检（需 bash + 
 ```
 
 调用方：`tanya`（终端前台）、`ivan`（常驻后台），依赖已发布版本；本地联调时临时写 `replace ../battlelab`。
+
+**跨实现差分必须在隔离环境内做**：把真实命令同时交给两个实现执行（如 vbash 与宿主 bash 对比输出）
+属于**执行未知代码**，一律在容器 / mount namespace / 只读 bind mount 内跑，或退一步只跑不触达文件系统的
+纯内建用例。**不得以「子进程 cwd 指向临时目录」代替隔离**——命令内部的 `cd` 不受 `exec.Cmd.Dir` 约束；
+只读命令也可能带写标志（`sed -i`/`sort -o`/`find -delete`/`date -s`/`awk 'print > f'`）或触达外部介质。
+背景见 `docs/vbash-capability.md` §5.2。
