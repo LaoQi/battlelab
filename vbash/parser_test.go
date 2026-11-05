@@ -577,3 +577,35 @@ func TestParseDoubleQuoteModeMarked(t *testing.T) {
 		t.Errorf("引号内变量片段为 %+v", segs[1])
 	}
 }
+
+func TestParseEmptyQuotedWord(t *testing.T) {
+	cases := map[string]int{
+		`f ""`:     2,
+		`f ''`:     2,
+		`f "" ""`:  3,
+		`f "":`:    2,
+		`f a "" b`: 4,
+	}
+	for src, want := range cases {
+		cmd := singleCommand(t, src)
+		if len(cmd.Words) != want {
+			t.Errorf("%q 有 %d 个词，期望 %d", src, len(cmd.Words), want)
+		}
+	}
+}
+
+func TestEmptyQuotedWordKeepsQuotedMode(t *testing.T) {
+	for _, src := range []string{`f ""`, `f ''`} {
+		cmd := singleCommand(t, src)
+		w := cmd.Words[1]
+		if len(w.Segments) != 1 {
+			t.Fatalf("%q 的段数为 %d，期望 1", src, len(w.Segments))
+		}
+		if !w.Quoted() {
+			t.Errorf("%q 应保留引用状态", src)
+		}
+		if w.Text != "" {
+			t.Errorf("%q 的文本为 %q，期望空", src, w.Text)
+		}
+	}
+}

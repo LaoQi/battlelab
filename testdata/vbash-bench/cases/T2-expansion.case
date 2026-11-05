@@ -138,3 +138,27 @@ command:
 --- name: T2/032-env-var-from-proc
 command:
   FOO=xyz sh -c 'echo $FOO'
+
+--- name: T2/033-empty-quoted-arg-count
+# 空引号参数必须保留为一个参数，不能被丢弃（参数个数、位置参数都会错位）
+command:
+  f() { echo $#; }; f ""; f ''; f "" ""
+
+--- name: T2/034-empty-quoted-in-middle
+# 中间的空参数不能吞掉，否则后续位置参数整体前移
+command:
+  f() { echo "$#:[$1][$2][$3]"; }; f a "" b
+
+--- name: T2/035-empty-quoted-at-iteration
+command:
+  f() { for a in "$@"; do echo "<$a>"; done; }; f "" x
+
+--- name: T2/036-empty-test-n
+# [ -n "" ] 必须为假：空引号参数被丢弃时会退化成单参数形式而误判为真
+command:
+  if [ -n "" ]; then echo T; else echo F; fi
+
+--- name: T2/037-empty-quoted-concat
+# 空引号与字面量拼接仍是一个参数
+command:
+  echo x""y; echo ""

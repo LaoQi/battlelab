@@ -443,8 +443,14 @@ func lexWordSegments(text string) ([]Segment, error) {
 
 func compactSegments(segs []Segment) []Segment {
 	out := make([]Segment, 0, len(segs))
-	for _, seg := range segs {
+	var quotedEmpty *Segment
+	for i := range segs {
+		seg := segs[i]
 		if seg.Kind == SegLiteral && seg.Text == "" {
+			if seg.Mode != ModeUnquoted && quotedEmpty == nil {
+				kept := seg
+				quotedEmpty = &kept
+			}
 			continue
 		}
 		if n := len(out); n > 0 && out[n-1].Kind == SegLiteral && seg.Kind == SegLiteral && out[n-1].Mode == seg.Mode {
@@ -454,6 +460,9 @@ func compactSegments(segs []Segment) []Segment {
 		out = append(out, seg)
 	}
 	if len(out) == 0 {
+		if quotedEmpty != nil {
+			return []Segment{*quotedEmpty}
+		}
 		return nil
 	}
 	return out
