@@ -42,6 +42,7 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 - `vbash-plan.md` — 虚拟 bash 的特性范围与实施规划（边界、特性矩阵、跨平台归一、分步门槛）
 - `vbash-impl.md` — 虚拟 bash 的实施记录（按阶段记偏差与自定决策）
 - `vbash-capability.md` — 虚拟 bash 的能力清单（已支持/不支持/与真 bash 的已知差异）
+- `vbash-open-issues.md` — 虚拟 bash 的遗留问题清单（接入前必须决策/修复的条目，修完即删）
 
 这些文档 2026-10-22 随 `agent`/`tools`/`ctty` 从 tanya 迁入；文中 `tanya 的 …` 前缀指 tanya 仓库的同名文档。
 

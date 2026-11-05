@@ -1,3 +1,112 @@
+## 2026-11-05 fix(vbash): 补三处递归/规模上限
+
+查「变量展开是否有递归深度限制」时发现的三处缺口，全部按「加明确上限 + 明确报错」闭合。
+变量本身不做递归展开（`a='${b}'; b='${a}'; echo "$a"` → 字面 `${b}`，与 bash 一致），不存在间接爆炸。
+
+- **大括号展开加递归深度上限**（`vbash/brace.go`）：`braceAlternatesRaw`/`braceAlternateAt` 原本裸递归，
+  `Parse` 拦不住（大括号在词段里是普通字面量，不进 `lexer.readBraced`），`{a,{a,{a,…}}}` 每层递归一次。
+  改成有状态展开器，复用 `maxNestDepth = 64`，超限报「大括号展开嵌套过深（上限 64 层）」
+- **大括号展开加字段数上限**：`{a,b}` 连写 n 次产生 2ⁿ 个字段（实测 n=20 → 104 万/1.4s、
+  n=22 → 419 万/6.8s，66 字节命令就能吃掉几 GB）。新增 `maxBraceFields = 16384`：
+  - 预算按**一次词列表**累积（`expandWords` / `wordListToItems` 各持一个 `braceLimits`），
+    不是每词各自计——否则多个词拼起来照样绕过
+  - `{1..N}` 序列在生成循环里就中断并报错，不会先造完再检查（`{1..999999999}` 现在瞬时失败）
+  - 超限报「大括号展开字段过多（上限 16384 个）」
+- **shell 函数调用加深度上限**：`f(){ f; }; f` 原本无上限（2 万层耗时 4.8s，深度取决于宿主栈大小）。
+  用上一轮遗留的闲置字段 `saveDepth`（改为 `funcDepth`）+ `maxFuncDepth = 512`，超限打
+  `f: maximum function nesting level exceeded (512)` 并让该次调用返回 1、**脚本继续执行**——
+  这是 bash `FUNCNEST` 的语义（真 bash 处同一场景直接 SIGSEGV）
+  - `branch()` 复制 `funcDepth`：子 shell 与管道分支是同 goroutine 同步递归，不继承就等于
+    `f(){ ( f ); }` 能绕过上限
+  - `dispatch` 现在把 `pos` 传给 `callFunc`，诊断带行号
+- **顺带修掉一处 O(n²)**（本轮查上限时发现，非本轮引入）：`findBraceFrom` 对每个 `{` 都向后线性
+  扫描到结尾，`{a` 重复 n 次就是 O(n²)——实测 n=1600 已要 1.36s，n=5000 直接卡住 15s 以上（一条几百字节
+  的命令即可触发）。改为先做一次栈式配对，再按配对表定位，`{a`×20000 现在是 3ms。
+  单测 `TestBraceUnmatchedOpenLinear` 守护
+- **顺带修掉管道段/命令替换里看不到函数**（本轮查上限时发现，非本轮引入）：
+  `f(){ echo x; }; f | cat` 报 `command not found`，`echo "[$(f)]"` 同样。根因是
+  `runPipeline` 与 `commandSubstitution` 用 `branch()` 造子环境而 `branch` 不复制 `funcs`
+  （`runSubshell` 显式补了那行，管道没补）
+  - 修法不能照抄那行：管道段并发在 goroutine 里，共享 map 会让「段内定义函数」变成并发 map 写。
+    改为 `branch` 里 `copyFuncs` 各拷一份（`*funcDef` 指针共享，函数体 AST 不可变），
+    `runSubshell` 的手动赋值随之删除
+  - 语义与 bash 逐项核对：管道各段可见、命令替换可见、段内重定义只在该段生效、
+    子 shell 内定义不泄漏到外层
+  - 基准新增 `T3c/127`、`T3c/128`（golden 由真 bash 录制）；单测 `funcdepth_test.go` 加 3 条
+- **函数形态调整**（包内）：`expandBraceWord(w) []Word` 换成 `(*braceLimits).word(w) ([]Word, error)`，
+  展开器自己持有深度与字段预算；`braceSplitChars`/`braceSequenceChars` 用第三返回值表示「超预算」而非
+  error，避免为哨兵造错误类型
+- **基准**：T2 新增 `052`/`053`、T3c 新增 `126`/`127`/`128`（golden 由真 bash 录制）；
+  总数 **218 → 223**，七层全部 100%。超限行为由单测守护（`vbash/brace_test.go` 新增 5 条、
+  `vbash/funcdepth_test.go` 新增 6 条）——上限本身是宿主相关的安全阀，不写进跨实现基准
+- **文档**：`capability` §3.4 扩为「嵌套深度与规模上限」，补大括号深度、字段数与函数深度三行，
+  说明为何是「安全阀」以及子 shell 为何要继承深度；删除 §3.3 差异表现已修好的「管道段内调用已定义函数」一行；
+  `vbash-open-issues.md` 新增 §3.1（三处上限）与 §3.2（函数可见性）；基准数字 218 → 223
+  同步到 `vbash-bench.md` / `vbash.md` / `plan` 状态行
+
+## 2026-11-05 feat(vbash): 实现大括号展开、printf 完整格式化、$(<file)
+
+承接上一轮的遗留清单，三条 P1 全部按「实现」路线闭合（不再报错/不再静默错结果）。
+
+- **大括号展开（`vbash/brace.go` 新）**：`{a,b}` 支持任意层嵌套、前后缀拼接、连写笛卡尔积；
+  `{1..3}`/`{3..1}`/`{01..03}`/`{1..10..3}`/`{a..e..2}`/`{-2..2}` 支持步长与前导零；引号内与
+  `\{` 转义不展开，`{}`/`{a}` 按字面保留。接入命令参数与 `for … in` 列表，**赋值上下文不展开**
+  （`x={a,b}` 保持字面，与 bash 一致）。
+  - 实现要点：把词段摊平成「字符 + 是否引用」序列后找最外层括号对，因此 `{"a,b",c}`、
+    `{a,"b,c"}`、`{a\,b,c}` 的引号/转义语义天然正确；`{a,{b,c}}`、`{{a,b}}` 这类嵌套按 bash
+    的「外层优先、失败退到下一个 `{`」规则递归。
+  - 空元素规则按 bash 区分：逗号列表的空项不产出字段（`{a,}`→`a`），序列里跨 `\` 的空项产出
+    空字段（`{Z..b}` 中间那个），整词为空时才落一个空参数（`{,,}`）。
+  - 花括号分组 `{ echo a; }` 在 AST 里是 `GroupKind = GroupBrace`、不进词段，天然不冲突
+- **`printf` 完整格式化（`vbash/printf.go` 新，从 `builtin.go` 拆出）**：
+  - 浮点 `f F e E g G`：精度、宽度、`-`/`0`/`+`/空格/`#`、`%g` 的 `1e+06` 与尾零裁剪、
+    `%e` 指数补齐两位
+  - 整数 `d i u o x X`：`%.Nd` 补零（负数把符号算进精度宽度）、`%u`/`%x` 对负数按 64 位无符号、
+    `%#x`/`%#o` 前缀、`%+d`/`% d`、`%.Nd` 下 `0` 填充让位
+  - 字符串 `s c b q`：`%.Ns` 按 rune 截断、宽度/左对齐；`%.0s` 为空
+  - 数字解析：`0x` 十六进制、前导零八进制（`010`→8）、`'A` 取字符、溢出取 `MaxInt64`/`MinInt64`、
+    `3.9`/`12abc` 取前缀值（诊断仍报错）
+  - 诊断口径与 bash 逐字节对齐（`LC_ALL=C` 核对）：`abc: invalid number`、
+    `08: invalid octal number`、`99999999999999999999: Numerical result out of range`，退出码 1；
+    原先 `formatPrintf` 返回的 error 被 `builtinPrintf` 转成诊断，现在改为回传 warn 字符串
+- **`$(<file)`（`vbash/runner.go`）**：等价 `$(cat file)` 但不起子进程；相对路径按当前 `Dir` 解析，
+  读失败时打 `name: No such file or directory` 诊断（用**原样的相对名**，不打绝对路径）、输出空、
+  不改变整体退出码——与 bash 一致
+- **基准**：T2 新增 14 条（`T2/038`–`T2/051`），golden 由真 bash 录制；总数 **204 → 218**，
+  七层全部 100%。单测新增 `vbash/brace_test.go`（3 条）、`vbash/printf_test.go`（4 条）、
+  `vbash/subst_test.go`（2 条）
+- **文档校正**：
+  - `capability` §3.1 把大括号展开与 `$(<file)` 移入已支持，`printf` 行改写为完整能力；
+    删掉错误的「整数精度生效，浮点精度不生效」；§3.3 移除已闭合的浮点 `printf` 与 `%d` 取整两行
+  - `capability` §3.3/§4 与 `plan` §3.4 统一后台 `&` 口径（**同步执行**、`wait` 空操作返回 0、
+    裸 `&` 同样等待），补实测耗时并说明「`nohup server &` 会在超时上限处被强杀」这一后果
+  - `plan` §3.4 的 `eval`/`trap` 由「报错」校正为 `command not found`（127）
+  - `vbash-bench.md` / `capability` §5 / `vbash.md` / `plan` 状态行的基准数字同步为 218
+  - **`docs/vbash-open-issues.md`** 重写：三条 P1 标记为已闭合并记实现要点与口径修正，
+    只留 P3 接线卫生
+- **上一轮的口径修正**（本轮复核得出）：大括号展开真实命中 **0.091%（16/17516）**，
+  既不是 1.81%（把引号内正则量词算进来了）也不是 0.027%（漏掉片段含 `/` 的形态）；
+  shell 层 `printf` 浮点动词只有 **3 行**，原记的 18 条里多数是 `awk` 自己的 printf
+
+## 2026-11-05 docs(vbash): 新增遗留问题清单
+
+- **`docs/vbash-open-issues.md`**（新）：接调用方 `tanya` 的接入评估时发现的问题，按级别列出：
+  - **P1 大括号展开静默字面化**：`{a,b}`/`{1..3}` 不展开且不报错，`mkdir -p d/{x,y}` 会真的
+    创建名为 `d/{x,y}` 的目录并返回 0。语料命中 0.027%（6/22497），其中 4 条是 `mkdir -p`。
+    §3.2 把它列在「明确不支持（报错，不回落）」表里，但该行实际是字面输出，表格语义与行内冲突
+  - **P1 `printf` 浮点精度不生效**：`%.3f` 截成 `3.1`、`%e` 不转科学计数，退出码 0。
+    语料命中 18 条（0.080%），形态是 `awk` 里做体积/耗时合计的 `printf "%.1f"`
+  - **P2 后台 `&`/`wait` 文档自相矛盾**：`plan` §3.4 称「后台启动后不等待、`wait` 报错」，
+    实测为**同步等待**（`sleep 2 &` 耗时 2010ms）且 `wait` 返回 0。以实现为准校正计划文档
+- **口径修正**：早先一轮统计的「大括号展开命中 1.81%」有误——把**引号内的正则量词**
+  （`sed "s/^.\{0,45\}\] //"`）算成了展开。重算口径为「引号状态机判定未引用 + 剥掉 heredoc 正文」，
+  真实值 0.027%
+- **复核留档**（非缺陷）：`eval`/`trap` 均按普通命令处理 → 127（`plan` 写「报错」需按实校正）；
+  Windows 输出解码未受影响（`streamCapture.finish()` 走 `toUTF8` → `decodeStream`）
+- **接入侧 P3**：`tools.Standard` 已能透传 `Vbash`/`Environ` 但无人使用；`MsgVbashPosixFmt`
+  是 0 引用死符号；`describeVbash` 属 Windows 路径、未真机验证
+- **未改动任何实现**：本条只加文档与索引，`vbash` 与 `tools/shell` 代码保持原样
+
 ## 2026-11-05 docs(vbash): 补记真实语料差分的数据来源与隔离纪律
 
 - **背景**：为评估 vbash 接入可行度，曾抽取真实会话的历史 `run_shell` 命令做 vbash 与宿主 bash 的

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: /nonexistent-vbash-xyz: No such file or directory\n",
+ "stdout": "[]\n",
+ "timeout": false
+}

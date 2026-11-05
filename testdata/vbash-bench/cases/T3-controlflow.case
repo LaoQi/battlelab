@@ -117,3 +117,18 @@ expect_exit: 5
 # set -e 严格模式：语料 0.22%，但脚本里出现就要正确处理
 command:
   set -e; false; echo unreachable
+
+--- name: T3c/126-function-recursion-within-limit
+# 递归 200 层的正常用法：上限（512）内结果与 bash 一致
+command:
+  f() { if [ "$1" -lt 200 ]; then f $(( $1 + 1 )); else echo bottom; fi; }; f 0
+
+--- name: T3c/127-function-in-pipeline
+# 管道段与命令替换里都能调用已定义的函数（子 shell 内定义不泄漏）
+command:
+  f() { echo F; }; f | cat; echo "[$(f)]"; ( g() { echo g; }; g )
+
+--- name: T3c/128-function-defined-in-pipeline-stage
+# 段内重定义只影响该段，外层仍是原定义
+command:
+  f() { echo one; }; f | ( f() { echo two; }; f ) | cat; f

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "<{a,b}>\n<a{1,2}b>\n",
+ "timeout": false
+}

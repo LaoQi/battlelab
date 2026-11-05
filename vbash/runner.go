@@ -27,7 +27,7 @@ type Runner struct {
 	warnedFd      bool
 	subStatus     int
 	funcs         map[string]*funcDef
-	saveDepth     int
+	funcDepth     int
 	condDepth     int
 	exemptErrExit bool
 }
@@ -130,7 +130,20 @@ func (r *Runner) branch(env *Env, io *IO) *Runner {
 		CancelCmd:    r.CancelCmd,
 	}
 	sub.expn = &expansion{env: env, runs: sub, io: io}
+	sub.funcDepth = r.funcDepth
+	sub.funcs = copyFuncs(r.funcs)
 	return sub
+}
+
+func copyFuncs(funcs map[string]*funcDef) map[string]*funcDef {
+	if len(funcs) == 0 {
+		return nil
+	}
+	out := make(map[string]*funcDef, len(funcs))
+	for name, fn := range funcs {
+		out[name] = fn
+	}
+	return out
 }
 
 func (r *Runner) runList(list *List, io *IO) (int, error) {
@@ -374,7 +387,7 @@ func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
 
 func (r *Runner) dispatch(argv []string, io *IO, pos Pos) (int, error) {
 	name := argv[0]
-	if code, ok, err := r.callFunc(name, argv, io); ok {
+	if code, ok, err := r.callFunc(name, argv, io, pos); ok {
 		return code, err
 	}
 	if canBuiltin(name) {
@@ -410,6 +423,9 @@ func (r *Runner) assign(a Assign, io *IO) (int, error) {
 }
 
 func (r *Runner) commandSubstitution(seg Segment) (string, error) {
+	if name, ok := readFileSubstitution(seg.Inner); ok {
+		return r.readFileInto(name)
+	}
 	body := seg.Inner
 	var out strings.Builder
 	subIO := &IO{In: r.IO.In, Out: &out, Err: r.IO.Err}
@@ -490,4 +506,32 @@ func firstLine(src string) string {
 		return src[:i]
 	}
 	return src
+}
+
+func readFileSubstitution(body string) (string, bool) {
+	t := strings.TrimSpace(body)
+	if !strings.HasPrefix(t, "<") {
+		return "", false
+	}
+	name := strings.TrimSpace(t[1:])
+	if name == "" || strings.ContainsAny(name, "<>|&;()") {
+		return "", false
+	}
+	if strings.ContainsAny(name, "$`") {
+		return "", false
+	}
+	return name, true
+}
+
+func (r *Runner) readFileInto(name string) (string, error) {
+	path := name
+	if !strings.HasPrefix(path, "/") && r.Env.Dir() != "" {
+		path = strings.TrimSuffix(r.Env.Dir(), "/") + "/" + path
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		r.diagf(r.IO.Err, Pos{}, "%s: %s", name, errText(err))
+		return "", nil
+	}
+	return strings.TrimRight(string(data), "\n"), nil
 }

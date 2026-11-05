@@ -53,12 +53,19 @@ func (s *fieldState) putSplit(value, ifs string) {
 
 func (x *expansion) expandWords(list []Word) ([]string, error) {
 	var out []string
+	lim := &braceLimits{}
 	for _, w := range list {
-		fs, err := x.expand(w)
+		words, err := lim.word(w)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, fs...)
+		for _, bw := range words {
+			fs, err := x.expand(bw)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, fs...)
+		}
 	}
 	return out, nil
 }

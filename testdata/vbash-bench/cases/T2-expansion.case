@@ -162,3 +162,76 @@ command:
 # 空引号与字面量拼接仍是一个参数
 command:
   echo x""y; echo ""
+
+--- name: T2/038-brace-list
+# 大括号列表展开：多个字段、前后缀保留
+command:
+  printf '<%s>' pre{a,b}post; echo
+
+--- name: T2/039-brace-range-num
+command:
+  printf '<%s>' {1..3}; echo; printf '<%s>' {01..03}; echo
+
+--- name: T2/040-brace-range-step
+command:
+  printf '<%s>' {1..10..3}; echo; printf '<%s>' {a..e..2}; echo
+
+--- name: T2/041-brace-nested-cartesian
+command:
+  printf '<%s>' {a,b}{1,2}; echo
+
+--- name: T2/042-brace-quoted-no-expand
+# 引号内与转义的大括号不展开
+command:
+  printf '<%s>' "{a,b}"; echo; printf '<%s>' a\{1,2\}b; echo
+
+--- name: T2/043-brace-in-for-list
+command:
+  for i in {1..3}; do echo "i=$i"; done
+
+--- name: T2/044-brace-no-comma-literal
+# 没有逗号也不是范围：按字面保留
+command:
+  printf '<%s>' {a}; echo; printf '<%s>' {}; echo
+
+--- name: T2/045-printf-float-precision
+command:
+  printf '%.3f|%8.2f|%-8.2f|\n' 3.14159 2.5 2.5
+
+--- name: T2/046-printf-scientific
+command:
+  printf '%e|%.3e|%E\n' 1234.5 1234.5 1234.5; printf '%g|%g|%g\n' 1000000 1234567 0.0001
+
+--- name: T2/047-printf-int-precision
+command:
+  printf '%.3d|%.5d|%.0d|\n' 5 42 7; printf '%.5d\n' -42
+
+--- name: T2/048-printf-flags
+command:
+  printf '%+d|% d|%#x|%#o|%08d|\n' 5 5 255 8 42
+
+--- name: T2/049-printf-unsigned-hex
+command:
+  printf '%u|%x|%X\n' -1 -1 255
+
+--- name: T2/050-read-file-substitution
+# $(&lt;file) 等价 $(cat file)，不经过子进程
+setup: mkdir -p d && printf 'hello\nworld\n' > d/in.txt
+command:
+  cd d; echo "[$(<in.txt)]"; x=$(<in.txt); echo "[$x]"
+
+--- name: T2/051-read-file-substitution-missing
+# 读不到文件：空输出 + 诊断，整体退出码不变
+command:
+  echo "[$(</nonexistent-vbash-xyz)]"
+
+
+--- name: T2/052-brace-nest-within-limit
+# 嵌套深度上限内（10 层）的展开结果与 bash 一致
+command:
+  printf '%s\n' {a,{a,{a,{a,{a,{a,{a,{a,{a,{a,x}}}}}}}}}} | wc -l
+
+--- name: T2/053-brace-cartesian-within-limit
+# 连写 13 组共 8192 个字段，仍在上限内
+command:
+  printf '%s\n' {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b} | wc -l

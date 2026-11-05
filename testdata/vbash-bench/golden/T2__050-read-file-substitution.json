@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "[hello\nworld]\n[hello\nworld]\n",
+ "timeout": false
+}

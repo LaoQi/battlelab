@@ -18,13 +18,13 @@
 testdata/vbash-bench/
 ├── cases/            用例定义（*.case，人类可读）
 │   ├── T0-simple.case        20 条  单命令+参数
-│   ├── T1-pipeline.case      36 条  管道/串联/重定向/退出码/cd
-│   ├── T2-expansion.case     32 条  变量/命令替换/参数展开/分词
+│   ├── T1-pipeline.case      42 条  管道/串联/重定向/退出码/cd/exec-fd
+│   ├── T2-expansion.case     53 条  变量/命令替换/参数展开/分词/大括号/printf 格式
 │   ├── T3-heredoc.case       20 条  heredoc（嵌套/多终止符/python 内联）→ 层级 T3h
-│   ├── T3-controlflow.case   25 条  for/if/while/case/函数/分组 → 层级 T3c
+│   ├── T3-controlflow.case   28 条  for/if/while/case/函数/分组 → 层级 T3c
 │   ├── C-corpus.case         30 条  真实语料高频形态（脱敏改写）
 │   └── X-edge.case           30 条  边界鲁棒性（不崩不挂）
-├── golden/           基准期望（193 个 json，由 run.py --record 生成，勿手改）
+├── golden/           基准期望（223 个 json，由 run.py --record 生成，勿手改）
 ├── run.py            运行器：录制 / 回放 / 比对 / 门槛判定
 └── tools/
     ├── gen_corpus_cases.py   从会话 jsonl 抽取高频形态并脱敏
@@ -68,7 +68,7 @@ files: {}
 cd testdata/vbash-bench
 
 ./run.py --record                       # 用真 bash 重新生成 golden
-./run.py --target /bin/bash             # 自检：应 193/193
+./run.py --target /bin/bash             # 自检：应 223/223
 ./run.py --target ../../vbash           # 测被测实现
 ./run.py --target ./mybash --filter T3  # 只跑 heredoc/控制流
 ./run.py --target ./mybash --verbose    # 打印失败详情与 diff
@@ -101,8 +101,8 @@ cd testdata/vbash-bench
 
 | 被测 | 结果 |
 |---|---|
-| 真 bash 5.3 | **193/193（100%）** |
-| `reference-naive.py` | **88/193（45.6%）** |
+| 真 bash 5.3 | **223/223（100%）** |
+| `reference-naive.py` | 见 run.py `--target ./tools/reference-naive.py` 实跑 |
 
 分层建议门槛（对应 `vbash.md` §7 的实施顺序）：
 

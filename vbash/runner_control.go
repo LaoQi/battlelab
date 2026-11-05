@@ -56,12 +56,19 @@ func (r *Runner) runFor(c *Compound, io *IO) (int, error) {
 
 func (r *Runner) wordListToItems(words []Word, c *Compound) ([]string, error) {
 	var items []string
+	lim := &braceLimits{}
 	for _, w := range words {
-		fs, err := r.expn.expand(w)
+		list, err := lim.word(w)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, fs...)
+		for _, bw := range list {
+			fs, err := r.expn.expand(bw)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, fs...)
+		}
 	}
 	return items, nil
 }
