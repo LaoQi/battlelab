@@ -214,14 +214,17 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 `run_shell` 增加一条**默认关闭**的实验执行路径：把命令交给进程内的 bash 子集解释器
 （`vbash`）执行，不再起 `bash -c` 子进程。开关与约束：
 
-| 项 | 内容 |
-|---|---|
-| `Config.Vbash` | `true` 启用解释器；默认 `false`，非交互路径走 `Tool.runVbash`（`tools/shell/vbash.go`） |
-| `Config.Environ` | 启用时**必填**（`func() []string`）：`vbash` 是纯库不读 `os.Environ`，外部命令的环境由此注入；缺失在 `New` 期报错 |
-| 非 POSIX shell | `pwsh`/`cmd` 下开启 `Config.Vbash` 在 `New` 期报错——解释器只实现 bash 语法 |
-| `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
-| 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
-| 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」 |
+开关分两层透传，**两侧都要置位**才生效（`tools.Options` 只是转发，不做任何默认值推断）：
+
+| 层 | 字段 | 内容 |
+|---|---|---|
+| `tools/shell.Config` | `Vbash` | `true` 启用解释器；默认 `false`，非交互路径走 `Tool.runVbash`（`tools/shell/vbash.go`） |
+| `tools/shell.Config` | `Environ` | 启用时**必填**（`func() []string`）：`vbash` 是纯库不读 `os.Environ`，外部命令的环境由此注入；缺失在 `New` 期报错 |
+| `tools.Options` | `Vbash` / `Environ` | 同上，经 `tools.Shell`/`tools.Standard` 原样转发。**不提供「Vbash 即自动用 os.Environ」的便捷开关**：环境来源属前台决定，库不预设 |
+| 非 POSIX shell | — | `pwsh`/`cmd` 下**允许**开启（跨平台归一正是目标），命令仍按 bash 写法；描述改走 `describeVbash` |
+| 行为 | `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
+| 行为 | 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
+| 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」 |
 
 实现要点：
 
@@ -235,4 +238,18 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 - 错误分流：`SyntaxError` 由解释器按 bash 文案写进 stderr（不再重复进 `Err`）；
   `ExitRequest` 是控制流信号；只有 `UnsupportedError` 与内部错误进 `Result.Err`
 
-用例见 `tools/shell/vbash_test.go`（18 条）；解释器侧语义与基准见 `docs/vbash-impl.md` 的 S8 节。
+前台接入（`tools.Standard` / `tools.Shell` 两种装配方式都一样）：
+
+```go
+list, err := tools.Standard(tools.Options{
+	Home:      home,
+	Workspace: func() string { return a.Workspace() },
+	Console:   con,
+	LookPath:  exec.LookPath,
+	Vbash:     true,          // 新增：转发到 shell.Config.Vbash
+	Environ:   os.Environ,    // 新增：转发到 shell.Config.Environ（必填）
+})
+```
+
+用例见 `tools/shell/vbash_test.go`（18 条）与 `tools/tools_test.go`（转发三条：
+能开启、缺 `Environ` 装配期报错、默认关闭）；解释器侧语义与基准见 `docs/vbash-impl.md` 的 S8 节。

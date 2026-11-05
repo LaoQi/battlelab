@@ -1,3 +1,18 @@
+## 2026-11-05 feat(tools): vbash 开关透传到公共装配层
+
+- **背景**：S8 把开关做进了 `tools/shell.Config`（`Vbash`/`Environ`），但公共装配层 `tools.Options`
+  没有对应字段，`tools.Standard`/`tools.Shell` 不透传——而这是文档推荐的标准入口，
+  **等于两个前台都开不了**：tanya `main.go`、ivan `runner/pool.go` 均走 `tools.Standard`，
+  两仓库内 `Vbash` 零命中（唯一能开的是 tanya 的集成测试，它直连 `shell.New`）
+- **`tools/tools.go`**：`Options` 新增 `Vbash bool` 与 `Environ func() []string`，`Shell` 原样转发到
+  `shell.Config`。**不加「`Vbash` 即自动用 `os.Environ`」的便捷开关**——环境来源属前台决定，
+  库不预设（与「库不读环境变量」的既有约束一致），缺失时由 `shell.New` 装配期报错兜底
+- **`tools/tools_test.go`**：新增三条转发用例（经 `Standard` 能开启并真的走解释器、缺 `Environ`
+  装配期报错、默认关闭）。已验证「字段存在但不转发」时前两条失败，确认用例有效
+- **`docs/shell-tool.md` §17**：开关表改为两层对照 + 前台接入示例，写明两侧都要置位
+- **验证**：`go build`/`vet`/`test` 全绿，`make cross` OK，`make vbash-self` 198/198；
+  tanya 与 ivan 均 `go build ./...` 通过（新字段可选，不改则行为不变）
+
 ## 2026-11-05 feat(vbash): 跨平台归一落地（Windows 分片实现）
 
 - **背景**：规划 §5 与 D3 把「跨平台归一」列为核心价值，但 `vbash/` 下实际没有任何平台分片：

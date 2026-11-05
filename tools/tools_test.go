@@ -122,3 +122,56 @@ func TestStandardToolsFollowWorkspace(t *testing.T) {
 		t.Errorf("run_shell 默认目录应跟随 /switch 后的工作区: got %q want %q", got, want)
 	}
 }
+
+func TestStandardVbashReachesShellTool(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("当前环境无 bash: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := Standard(Options{
+		Home:      home,
+		Workspace: func() string { return cwd },
+		LookPath:  exec.LookPath,
+		Vbash:     true,
+		Environ:   os.Environ,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := list[0]
+	if !strings.Contains(sh.Definition().Function.Description, "内置 bash 解释器") {
+		t.Fatalf("经 Standard 开启 Vbash 后描述应说明解释器: %q", sh.Definition().Function.Description)
+	}
+	res := sh.Invoke(context.Background(), `{"command":"echo $((1+2)) vb"}`)
+	got, ok := res.Meta.(*shell.Result)
+	if !ok || got == nil {
+		t.Fatalf("run_shell 应携带结构化结果: %+v", res)
+	}
+	var out strings.Builder
+	for _, c := range got.Stdout {
+		out.WriteString(c.Data)
+	}
+	if strings.TrimSpace(out.String()) != "3 vb" {
+		t.Errorf("命令应由解释器执行并给出内建展开结果: %q", out.String())
+	}
+}
+
+func TestStandardVbashRequiresEnviron(t *testing.T) {
+	if _, err := Shell(Options{LookPath: stubLookPath, Vbash: true}); err == nil {
+		t.Fatal("经 Options 开启 Vbash 但缺 Environ 时应装配期报错")
+	}
+}
+
+func TestStandardVbashOffByDefault(t *testing.T) {
+	list, err := Standard(Options{LookPath: stubLookPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(list[0].Definition().Function.Description, "内置 bash 解释器") {
+		t.Error("未开启 Vbash 时描述不应提及解释器")
+	}
+}
