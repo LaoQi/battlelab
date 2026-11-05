@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -12,9 +13,20 @@ type IO struct {
 	Out   io.Writer
 	Err   io.Writer
 	Extra map[int]io.Writer
+	Shut  map[int]bool
+}
+
+func (x *IO) closed(fd int) bool {
+	if x.Shut == nil {
+		return false
+	}
+	return x.Shut[fd]
 }
 
 func (x *IO) writer(fd int) (io.Writer, bool) {
+	if x.closed(fd) {
+		return nil, false
+	}
 	switch fd {
 	case 0:
 		if w, ok := x.In.(io.Writer); ok {
@@ -34,6 +46,9 @@ func (x *IO) writer(fd int) (io.Writer, bool) {
 }
 
 func (x *IO) withWriter(fd int, w io.Writer) {
+	if x.Shut != nil {
+		delete(x.Shut, fd)
+	}
 	switch fd {
 	case 0:
 		if r, ok := w.(io.Reader); ok {
@@ -53,6 +68,47 @@ func (x *IO) withWriter(fd int, w io.Writer) {
 	x.Extra[fd] = w
 }
 
+func (x *IO) shutFd(fd int) {
+	switch fd {
+	case 0:
+		x.In = emptyReader()
+	case 1:
+		x.Out = errWriter{}
+	case 2:
+		x.Err = errWriter{}
+	default:
+		if x.Extra != nil {
+			delete(x.Extra, fd)
+		}
+	}
+	if x.Shut == nil {
+		x.Shut = map[int]bool{}
+	}
+	x.Shut[fd] = true
+}
+
+type closedFdError struct{ fd int }
+
+func (e closedFdError) Error() string { return "Bad file descriptor" }
+
+type errWriter struct{ fd int }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, closedFdError{w.fd} }
+
+func (x *IO) extraFds() []int {
+	if len(x.Extra) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(x.Extra))
+	for fd := range x.Extra {
+		if fd >= 3 {
+			out = append(out, fd)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
 func (x *IO) bufferedInput() *bufio.Reader {
 	if br, ok := x.In.(*bufio.Reader); ok {
 		return br
@@ -64,6 +120,12 @@ func (x *IO) bufferedInput() *bufio.Reader {
 
 func (x *IO) clone() *IO {
 	c := &IO{In: x.In, Out: x.Out, Err: x.Err}
+	if len(x.Shut) > 0 {
+		c.Shut = make(map[int]bool, len(x.Shut))
+		for k, v := range x.Shut {
+			c.Shut[k] = v
+		}
+	}
 	if len(x.Extra) > 0 {
 		c.Extra = make(map[int]io.Writer, len(x.Extra))
 		for k, v := range x.Extra {
@@ -73,11 +135,12 @@ func (x *IO) clone() *IO {
 	return c
 }
 
-func (x *IO) WriteString(w io.Writer, s string) {
+func (x *IO) WriteString(w io.Writer, s string) error {
 	if w == nil {
-		return
+		return nil
 	}
-	io.WriteString(w, s)
+	_, err := io.WriteString(w, s)
+	return err
 }
 
 type nopReader struct{}

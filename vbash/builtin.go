@@ -137,10 +137,12 @@ func builtinEcho(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	}
 	out := io.Out
 	if newline {
-		io.WriteString(out, text+"\n")
-		return 0, nil
+		text += "\n"
 	}
-	io.WriteString(out, text)
+	if err := io.WriteString(out, text); err != nil {
+		r.diagfName(io.Err, pos, "echo", "write error: %s", err.Error())
+		return 1, nil
+	}
 	return 0, nil
 }
 
@@ -195,7 +197,10 @@ func builtinPrintf(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 		r.diagfName(io.Err, pos, "printf", "%s", err.Error())
 		return 1, nil
 	}
-	io.WriteString(io.Out, out)
+	if werr := io.WriteString(io.Out, out); werr != nil {
+		r.diagfName(io.Err, pos, "printf", "write error: %s", werr.Error())
+		return 1, nil
+	}
 	return 0, nil
 }
 
@@ -713,6 +718,13 @@ func builtinRead(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	}
 	if len(names) == 0 {
 		names = []string{"REPLY"}
+	}
+	if io.closed(0) {
+		r.diagfName(io.Err, pos, "read", "0: Bad file descriptor")
+		for _, name := range names {
+			r.Env.Set(name, "", false)
+		}
+		return 1, nil
 	}
 	line, err := readLine(io.bufferedInput())
 	if err != nil && line == "" {

@@ -63,6 +63,7 @@ tool, err := shell.New(shell.Config{
 | **分词与 glob** | 未引用展开按 IFS 切分、双引号不切、`"$@"` 逐元素保形、空引号参数保留（`f ""` 传 1 个空串）、glob `* ? [...]`（无匹配保字面、不匹配隐藏文件） |
 | **`~` 展开** | `~` → `$HOME`、`~/x` |
 | **内建命令** | `: true false echo printf cd pwd export unset set shift exit return read wait local break continue test [`（共 21 个，含 `[`） |
+| **`exec`** | `exec >f 2>&1`（无命令，**重定向持久生效**到脚本结束）、`exec <cmd> [args]`（执行该命令后不再继续，退出码取该命令）、裸 `exec` 无副作用；`-c`/`-l`/`-a name` 前缀被接受但语义简化 |
 | **`test`/`[`** | 一元 `-z -n -e -a -f -d -s -r -w -x -L -h`、二元 `= == != < > -eq -ne -lt -le -gt -ge`、`!` 取反 |
 | **`printf`** | `%s %d %i %u %o %x %X %c %f %e %g %b %q`、宽度/左对齐/零填充、格式复用、`\n \t \r \\ \" \a \b \f \v \e \0NNN \xHH`；**整数精度生效，浮点精度不生效**（见 §3.3） |
 | **`echo`** | `-n`、`-e`/`-E`、`\c` 与转义序列 |
@@ -87,7 +88,7 @@ tool, err := shell.New(shell.Config{
 | 数组 `a=(1 2)`、`${a[1]}` | 语法错误 / bad substitution |
 | 嵌套超过 64 层（`$()` / `${}` / `$(( ))`） | `SyntaxError`，退出码 2（保护宿主不被撑爆内存） |
 | 大括号展开 `{a,b}`、`{1..3}` | **不展开，按字面输出** |
-| 别名 `alias`、`source`/`.`、`eval`、`exec`、`declare`、`type`、`command`、`trap`、`ulimit`、`umask`、`getopts`、`mapfile`、`jobs`/`fg`/`bg`/`kill` | 按普通命令处理 → `command not found`（退出码 127） |
+| 别名 `alias`、`source`/`.`、`eval`、`declare`、`type`、`command`、`trap`、`ulimit`、`umask`、`getopts`、`mapfile`、`jobs`/`fg`/`bg`/`kill` | 按普通命令处理 → `command not found`（退出码 127） |
 
 ### 3.3 与真 bash 的已知差异（不报错，但结果不同）
 
@@ -121,7 +122,8 @@ tool, err := shell.New(shell.Config{
 | `$$` | `0` | 真实 pid |
 | `$*` 在双引号内 | 按空格连接（不按 IFS 首字符） | 按 IFS 首字符 |
 | 后台 `&` | 启动后**等待完成**（不是真后台） | 立即返回 |
-| 外部命令的 fd 3+ | 不支持（`3>&1` 对子进程无效） | 支持 |
+| 外部命令的 fd 3+ | 不支持：`3>f`/`3>&1` 只对**内建**生效，透传给外部程序时不成立（`sh -c 'echo x >&3' 3>f` 会失败）。首次遇到会打一条 `fd N: not passed to external commands` 提示，避免静默误判 | 支持 |
+| 已关闭的 stdin 传给外部程序 | `exec 0<&-` 后外部程序读到的是空输入（EOF）而非 `Bad file descriptor` | 子进程继承到已关闭 fd 0，读即报错 |
 | `echo -e 'a\0101b'`（`\0NNN` 八进制） | 不解释，按字面输出 | → `aAb` |
 
 ### 3.4 嵌套深度上限
@@ -212,7 +214,7 @@ $ vbashrun -c 'echo $($($(...)))'   # 超过 64 层
 | `parser.go` `parser_control.go` `ast.go` | 递归下降：list / and-or / pipeline / command / 复合命令 / 重定向挂载 |
 | `env.go` `expand.go` `arith.go` `glob.go` `match.go` | 变量表与环境克隆、参数展开、算术求值、glob |
 | `runner.go` `runner_control.go` `runner_group.go` `exec.go` `redirect.go` | 执行：列表/管道/复合命令/函数/分组/重定向/外部透传 |
-| `builtin.go` `test.go` `strconv.go` | 21 个内建、`test` 运算、数字格式化 |
+| `builtin.go` `test.go` `strconv.go` `exec_builtin.go` | 21 个内建、`test` 运算、数字格式化、`exec` 持久重定向 |
 | `errexit.go` | `set -e` 判定 |
 | `diag.go` `errors.go` | bash 对齐的诊断文案、`UnsupportedError`/`SyntaxError`/`RuntimeError`/`ExitRequest` |
 | `platform.go` `platform_posix.go` `platform_{linux,darwin,windows}.go` `platform_stub.go` | 平台差异表：路径与盘符归一、`PATH` 分隔、可执行判定、`/dev/null`、信号名与退出码 |

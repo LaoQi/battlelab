@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: 3: Bad file descriptor\n",
+ "stdout": "rc=1\n",
+ "timeout": false
+}

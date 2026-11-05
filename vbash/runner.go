@@ -24,6 +24,7 @@ type Runner struct {
 
 	expn          *expansion
 	ErrExit       bool
+	warnedFd      bool
 	subStatus     int
 	funcs         map[string]*funcDef
 	saveDepth     int
@@ -311,6 +312,9 @@ func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
 		}
 		r.Env.SetStatus(code)
 		return code, gerr
+	}
+	if isExecCommand(cmd) {
+		return r.runExec(cmd, io)
 	}
 	io, cleanup, err := r.applyRedirects(cmd, io)
 	if err != nil {

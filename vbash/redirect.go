@@ -16,6 +16,19 @@ func (c *redirectCleanup) close() {
 	}
 }
 
+func (r *Runner) applyExecRedirects(cmd *Command) error {
+	if len(cmd.Redirs) == 0 {
+		return nil
+	}
+	cl := &redirectCleanup{}
+	for _, redir := range cmd.Redirs {
+		if err := r.applyRedirect(r.IO, redir, cl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Runner) applyRedirects(cmd *Command, base *IO) (*IO, func(), error) {
 	if len(cmd.Redirs) == 0 {
 		return base, nil, nil
@@ -77,6 +90,14 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 		io.withWriter(2, f)
 		return nil
 	case OpGreatAmp, OpLessAmp:
+		if target == "-" {
+			if fd < 0 {
+				r.diagf(r.IO.Err, redir.Pos, "%s", "ambiguous redirect")
+				return errRedirectFailed
+			}
+			io.shutFd(fd)
+			return nil
+		}
 		if n, ok := numericName(target); ok {
 			src, found := io.writer(n)
 			if !found {

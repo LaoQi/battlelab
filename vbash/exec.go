@@ -100,6 +100,14 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 		}
 		return code, nil
 	}
+	if fds := io.extraFds(); len(fds) > 0 && !r.warnedFd {
+		r.warnedFd = true
+		r.diagf(io.Err, pos, "fd %s: not passed to external commands (vbash limitation)", joinInts(fds))
+	}
+	if io.closed(0) && !r.warnedFd {
+		r.warnedFd = true
+		r.diagf(io.Err, pos, "fd 0: closed stdin not passed to external commands (vbash limitation)")
+	}
 	cmd := exec.CommandContext(r.Ctx, full, argv[1:]...)
 	cmd.Args[0] = plat.Argv0(argv[0])
 	cmd.Dir = r.hostDir()
@@ -149,6 +157,14 @@ func (r *Runner) diagSignal(errw io.Writer, pos Pos, signum int, argv []string) 
 }
 
 const waitDelay = 2 * time.Second
+
+func joinInts(ns []int) string {
+	parts := make([]string, 0, len(ns))
+	for _, n := range ns {
+		parts = append(parts, itoa(n))
+	}
+	return strings.Join(parts, ",")
+}
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

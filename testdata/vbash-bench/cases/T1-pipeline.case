@@ -181,3 +181,34 @@ command:
 command:
   echo before  # 这是注释
   echo after
+
+--- name: T1/037-exec-redirect-persists
+# exec 无命令时重定向持久生效：后续命令（含 stderr）都进同一文件
+command:
+  exec > out.txt 2>&1; echo first; ls no_such_path; echo "rc=$?"; grep -c . out.txt
+files: {}
+
+--- name: T1/038-exec-redirect-stdout-only
+command:
+  exec >> log.txt; echo a; echo b; grep -c . log.txt
+files: {"log.txt": "seed\n"}
+
+--- name: T1/039-exec-command-replaces
+# exec 带命令：执行该命令后 shell 不继续（after 不应出现）
+command:
+  exec echo replaced; echo after
+
+--- name: T1/040-fd-close-stdout
+# >&- 关闭 stdout 后内建写入失败，退出码 1（stderr 仍有输出）
+command:
+  echo hi >&-; echo "rc=$?" >&2
+
+--- name: T1/041-fd-close-then-reopen
+command:
+  exec 3>&-; echo x >&3; echo "rc=$?"
+
+--- name: T1/042-fd-dup-persists
+# exec 建立 fd 3 后，后续命令可用 >&3 写入
+command:
+  exec 3> f3.txt; echo hi >&3; exec 3>&-; cat f3.txt
+files: {}

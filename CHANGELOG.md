@@ -1,3 +1,27 @@
+## 2026-11-05 feat(vbash): exec 内建与 fd 关闭语义（fd 支持补课）
+
+- **背景**：检查 fd 支持时发现 `/dev/null` 本身是好的（`2>/dev/null`、`>f 2>&1`、顺序敏感语义、
+  `test -e /dev/null` 全部与 bash 一致），真正的缺口在两处：**`exec` 内建完全没实现**
+  （`exec >log 2>&1` 这种最常见的日志重定向直接 `command not found`），以及
+  **`>&-`/`<&-` 被当成写文件**（静默给出错误结果，比报错更难发现）
+- **`exec` 内建（`vbash/exec_builtin.go` 新）**：三种形态——
+  `exec >f 2>&1`（无命令，重定向**持久生效**到脚本结束，后续命令含外部程序的 stderr 都进该文件）、
+  `exec <cmd>`（执行后不再继续，退出码取该命令，等价 bash 的进程替换语义）、裸 `exec` 无副作用；
+  `-c`/`-l`/`-a name` 前缀接受但语义简化
+- **`>&-` / `<&-`（`vbash/io.go`、`redirect.go`）**：`IO` 新增 `Shut map[int]bool` 与 `shutFd`，
+  关闭后 fd 1/2 换成 `errWriter`（写入返回 `Bad file descriptor`）、fd 0 换成空读；
+  `withWriter` 会清掉关闭标记（`exec 3>&-; exec 3>f` 可重新打开）
+- **写错误传播**：`IO.WriteString` 原先吞掉 `io.WriteString` 的错误，现返回 error；
+  `echo`/`printf` 写入失败报 `write error: Bad file descriptor` 并记退出码 1（`read` 从已关闭 fd 0 读同样报错）
+- **fd 3+ 对外部程序**：`exec.Cmd.ExtraFiles` 只支持从 3 开始连续的 `*os.File`，而 `IO.Extra` 是
+  `map[int]io.Writer`（可能 `discard`/内存 writer），整体透传需要重构 IO 表示——本轮**不做**，
+  改为首次遇到时打一条 `fd N: not passed to external commands (vbash limitation)`，
+  把静默失败变成可诊断。已关闭 stdin 传给外部程序同理提示
+- **基准**：新增 6 条（`T1/037`…`T1/042`，golden 由真 bash 录制），总数 198 → **204**；
+  单测新增 `vbash/exec_fd_test.go` 10 条。已验证回退 `exec` 分派或 `>&-` 处理会分别挂 4 条 / 2 条
+- **文档**：`docs/vbash-capability.md` §3.1 增 `exec` 条目、§3.2 把 `exec` 从不支持清单移出、
+  §3.3 改写 fd 3+ 与已关闭 stdin 两行（说清边界与提示文案）、代码地图补 `exec_builtin.go`
+
 ## 2026-11-05 feat(tools): vbash 开关透传到公共装配层
 
 - **背景**：S8 把开关做进了 `tools/shell.Config`（`Vbash`/`Environ`），但公共装配层 `tools.Options`
