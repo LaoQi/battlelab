@@ -2,7 +2,7 @@
 
 > 归属（2026-11-04）：本文是 `docs/vbash.md`（语料分析）与 `docs/vbash-bench.md`（回归基准）
 > 的决策落地。**语料分析回答「真实命令长什么样」，本文回答「我们虚拟到哪一层」。**
-> 状态：**S1–S8 已实施**（2026-11-04）：`vbash` 解释器达标 223/223，已接入 `tools/shell`（默认关闭）。
+> 状态：**S1–S8 已实施**（2026-11-04）：`vbash` 解释器达标 228/228，已接入 `tools/shell`（默认关闭）。
 
 ## 1 目标与边界
 
@@ -255,7 +255,7 @@ run_shell(command)
 | **S8** ✅ | 接入 `tools/shell`：`Config.Vbash`（默认关闭）+ `Config.Environ`，进程内执行 | 全量 193 条 + 现有 Go 测试全绿 | 小 |
 
 **一阶段完成状态**：S1–S8 全部完成（偏差见 `docs/vbash-impl.md` 各节）。
-**验证状态**：Linux 侧由 `make vbash-check`（198/198）守护；darwin/windows 仅由 `make cross`
+**验证状态**：Linux 侧由 `make vbash-check`（228/228）守护；darwin/windows 仅由 `make cross`
 保证编译与 vet 通过，**未在真机跑过基准**——跨平台一致性目前是**实现完成、待验证**，
 不应当被引用为已证实结论。
 原始完成定义：S1–S6 完成，`T0=100, T1=100, T2≥95, T3h≥90, C=100, X=100`，

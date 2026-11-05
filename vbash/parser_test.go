@@ -218,6 +218,46 @@ func TestParseSpacedDigitIsNotFd(t *testing.T) {
 	}
 }
 
+func TestParseFdRedirectOnCompound(t *testing.T) {
+	cases := []struct {
+		src  string
+		fd   int
+		op   OpKind
+		file string
+	}{
+		{"for i in 1; do echo $i; done 2>/dev/null", 2, OpGreat, "/dev/null"},
+		{"while false; do :; done 2>f", 2, OpGreat, "f"},
+		{"if true; then :; fi 0</dev/null", 0, OpLess, "/dev/null"},
+		{"{ echo a; } 1>f", 1, OpGreat, "f"},
+		{"( echo a ) 2>>f", 2, OpDGreat, "f"},
+		{"for i in 1; do echo $i; done >f", DefaultFd, OpGreat, "f"},
+	}
+	for _, c := range cases {
+		cmd := singleCommand(t, c.src)
+		if len(cmd.Redirs) != 1 {
+			t.Fatalf("%q 重定向数 %d", c.src, len(cmd.Redirs))
+		}
+		r := cmd.Redirs[0]
+		if r.Fd != c.fd || r.Op != c.op || r.Target.Text != c.file {
+			t.Errorf("%q 解析为 fd=%d op=%v target=%q，期望 fd=%d op=%v target=%q",
+				c.src, r.Fd, r.Op, r.Target.Text, c.fd, c.op, c.file)
+		}
+	}
+}
+
+func TestParseFdRedirectAfterCompoundKeepsOrder(t *testing.T) {
+	cmd := singleCommand(t, "for i in 1; do :; done 2>&1 >f")
+	if len(cmd.Redirs) != 2 {
+		t.Fatalf("重定向数 %d", len(cmd.Redirs))
+	}
+	if cmd.Redirs[0].Fd != 2 || cmd.Redirs[0].Op != OpGreatAmp {
+		t.Errorf("第一个重定向 %+v", cmd.Redirs[0])
+	}
+	if cmd.Redirs[1].Fd != DefaultFd || cmd.Redirs[1].Op != OpGreat {
+		t.Errorf("第二个重定向 %+v", cmd.Redirs[1])
+	}
+}
+
 func TestParseHeredocAttached(t *testing.T) {
 	cmd := singleCommand(t, "cat <<'EOF'\nbody line\nEOF\n")
 	if len(cmd.Redirs) != 1 {

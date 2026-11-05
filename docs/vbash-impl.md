@@ -160,7 +160,7 @@
 
 - `go build ./... && go vet ./... && go test ./... && go test -race ./...` 全绿
 - `make cross`（darwin/windows 的 vet + 逐包测试编译）OK
-- `make vbash-check`（真 bash 录 golden）**198/198**、`make vbash-self`（跑 vbash 适配器）**198/198**
+- `make vbash-check`（真 bash 录 golden）**228/228**、`make vbash-self`（跑 vbash 适配器）**228/228**
   ——两者口径不同，前者只证明用例与 bash 一致，**后者才是被测实现**；本轮回归正是由后者才发现
 - **未验证项**：Windows/macOS 真机基准未跑（当前环境只有 Linux），故文档一律标「实现完成、待验证」
 

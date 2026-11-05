@@ -132,3 +132,25 @@ command:
 # 段内重定义只影响该段，外层仍是原定义
 command:
   f() { echo one; }; f | ( f() { echo two; }; f ) | cat; f
+
+--- name: T3c/129-compound-fd-redirect-null
+# 复合命令后接带 fd 前缀的重定向：docker 等工具与「跑批时静音 stderr」的常见写法
+command:
+  { echo out; echo err >&2; } 2>/dev/null; echo "rc=$?"
+
+--- name: T3c/130-compound-fd-redirect-to-file
+command:
+  for i in 1 2; do echo "n=$i"; done 2>/tmp/vbash-t3c130.err; wc -c < /tmp/vbash-t3c130.err; rm -f /tmp/vbash-t3c130.err
+
+--- name: T3c/131-compound-fd-redirect-order
+# 2>&1 与 >file 的顺序仍然敏感，复合命令上同样成立
+command:
+  { echo a; echo b >&2; } 2>&1 > /tmp/vbash-t3c131.out | tr a-z A-Z; echo "---"; cat /tmp/vbash-t3c131.out; rm -f /tmp/vbash-t3c131.out
+
+--- name: T3c/132-subshell-fd-redirect
+command:
+  ( echo sub; echo suberr >&2 ) 2>/dev/null
+
+--- name: T3c/133-if-fd-redirect-stdin
+command:
+  if cat 0</dev/null; then echo no-input; fi

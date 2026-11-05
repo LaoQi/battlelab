@@ -419,6 +419,12 @@ func (p *parser) parseCommand(ctx parseCtx) (*Command, error) {
 				cmd.Redirs = append(cmd.Redirs, redir)
 				continue
 			}
+			if redir, ok, err := p.tryFdRedirect(tok); err != nil {
+				return nil, err
+			} else if ok {
+				cmd.Redirs = append(cmd.Redirs, redir)
+				continue
+			}
 			return nil, p.unexpected(tok)
 		}
 		if tok.Kind == TokOp {
@@ -444,20 +450,9 @@ func (p *parser) parseCommand(ctx parseCtx) (*Command, error) {
 		if tok.Kind != TokWord {
 			return nil, p.unexpected(tok)
 		}
-		if fd, ok, err := p.redirectFd(tok); err != nil {
+		if redir, ok, err := p.tryFdRedirect(tok); err != nil {
 			return nil, err
 		} else if ok {
-			if _, err := p.next(); err != nil {
-				return nil, err
-			}
-			opTok, err := p.peek(0)
-			if err != nil {
-				return nil, err
-			}
-			redir, err := p.parseRedirect(opTok, fd)
-			if err != nil {
-				return nil, err
-			}
 			cmd.Redirs = append(cmd.Redirs, redir)
 			continue
 		}
@@ -547,6 +542,28 @@ func (p *parser) parseCompound(name string) (*Compound, bool, error) {
 		}
 	}
 	return nil, false, nil
+}
+
+func (p *parser) tryFdRedirect(tok Token) (*Redirect, bool, error) {
+	if tok.Kind != TokWord {
+		return nil, false, nil
+	}
+	fd, ok, err := p.redirectFd(tok)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if _, err := p.next(); err != nil {
+		return nil, false, err
+	}
+	opTok, err := p.peek(0)
+	if err != nil {
+		return nil, false, err
+	}
+	redir, err := p.parseRedirect(opTok, fd)
+	if err != nil {
+		return nil, false, err
+	}
+	return redir, true, nil
 }
 
 func (p *parser) redirectFd(tok Token) (int, bool, error) {

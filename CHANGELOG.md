@@ -1,3 +1,31 @@
+## 2026-11-06 fix(vbash): 复合命令后接带 fd 前缀的重定向解析失败
+
+`parseCommand` 的复合命令分支（`cmd.Group`/`cmd.Func`/`cmd.Compound` 已就位后）只识别 `TokOp` 形态的
+重定向，没有走 `redirectFd`，于是紧跟 `done`/`fi`/`esac`/`}`/`)` 的数字前缀全部落到「未预期的记号」：
+
+| 写法 | 修复前 | 修复后（与 bash 一致） |
+|---|---|---|
+| `for i in 1; do echo $i; done 2>/dev/null` | 语法错误、退出码 2 | 正常执行 |
+| `while false; do :; done 2>/dev/null` | 同上 | 正常执行 |
+| `if true; then :; fi 2>/dev/null` | 同上 | 正常执行 |
+| `{ echo a; } 2>/dev/null` | 同上 | 正常执行 |
+| `( echo a ) 2>/dev/null` | 同上 | 正常执行 |
+| `for i in 1; do echo $i; done 2>&1 \| cat` | 同上 | 正常执行 |
+| `for i in 1; do echo $i; done >f` | 正常 | 不变（无 fd 前缀本来就支持） |
+
+`vbash-capability.md` §3.1 早已写「redirs 可挂在分组/复合命令/函数上」，是实现没跟上文档，不是设计取舍。
+真实语料命中率 0.90%（11/1219 条历史 `run_shell` 调用），形态集中在「跑批时静音 stderr」——
+一开 vbash 就会把原本能跑的命令变成硬报错，属接入前必须闭合的缺陷。
+
+- **修法**：抽出 `(*parser).tryFdRedirect(tok)`，把「数字 fd + 紧跟重定向符」的识别与装配收成一处，
+  普通命令路径与复合命令分支共用；行为对普通命令完全不变（原内联逻辑原样搬入）
+- **基准**：T3c 新增 `129`–`133`（`/dev/null`、写文件、`2>&1 >file` 保序、子 shell、`if` 上挂 stdin），
+  golden 由真 bash 录制；总数 **223 → 228**，七层全部 100%
+- **单测**：`vbash/parser_test.go` 新增 `TestParseFdRedirectOnCompound`（6 条形态）与
+  `TestParseFdRedirectAfterCompoundKeepsOrder`（复合命令上的顺序敏感性）
+- **函数定义的重定向**（`f(){ :; } 2>/dev/null`）仍走 `tryFuncDef` 自己的路径，本轮未改动——
+  实测 bash 与 vbash 均已正常（重定向作用于定义语句本身），只是不走新抽的 helper
+
 ## 2026-11-05 fix(vbash): 补三处递归/规模上限
 
 查「变量展开是否有递归深度限制」时发现的三处缺口，全部按「加明确上限 + 明确报错」闭合。
