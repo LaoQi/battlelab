@@ -1,3 +1,15 @@
+## 2026-11-06 feat(tools): vbash 工具描述列出不支持的构造与替代写法
+
+`run_shell` 启用 vbash 后，描述里原本只有一句「实验特性，不支持的构造直接报错」，
+模型撞到 `case`/`[[ ]]` 等报错后只能猜替代方案（实测会反复试探 `[[ ]]` 是否可用）。
+
+现将高频不支持项与替代写法直接写进描述：`case`/`[[ ]]`/反引号/`<<<`/`(( ))`/进程替换/数组/
+函数内改全局变量/`${V:off:len}`/算术 `n++` 与 `**`/`set -o pipefail`/`$RANDOM` →
+改用 `if`/`elif`、`[ ]`、`$( )`、heredoc、`$(( ))`。
+
+描述在 POSIX 与 Windows 宿主上都前置同一句（Windows 另有路径写法提示）。
+单测 `TestVbashDescriptionListsUnsupported` 守关键词。
+
 ## 2026-11-06 fix(vbash): 复合命令后接带 fd 前缀的重定向解析失败
 
 `parseCommand` 的复合命令分支（`cmd.Group`/`cmd.Func`/`cmd.Compound` 已就位后）只识别 `TokOp` 形态的

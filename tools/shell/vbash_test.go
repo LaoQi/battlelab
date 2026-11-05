@@ -225,3 +225,12 @@ func TestVbashDescriptionMentionsInterpreter(t *testing.T) {
 		t.Error("未启用时描述不应提及解释器")
 	}
 }
+
+func TestVbashDescriptionListsUnsupported(t *testing.T) {
+	desc := testVbashTool(t).toolDesc()
+	for _, want := range []string{"case", "[[ ]]", "反引号", "<<<", "数组", "pipefail"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("描述应列出不支持构造 %q，避免模型只能试错: %q", want, desc)
+		}
+	}
+}

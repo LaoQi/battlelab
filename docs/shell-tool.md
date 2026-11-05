@@ -224,7 +224,7 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 | 非 POSIX shell | — | `pwsh`/`cmd` 下**允许**开启（跨平台归一正是目标），命令仍按 bash 写法；描述改走 `describeVbash` |
 | 行为 | `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
 | 行为 | 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
-| 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」 |
+| 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」**并列出不支持的构造**（`case`/`[[ ]]`/反引号/`<<<`/`(( ))`/进程替换/数组/函数内改全局变量/`${V:off:len}`/算术 `n++` 与 `**`/`set -o pipefail`/`$RANDOM`），给出替代写法——不列清单模型只能靠报错试错 |
 
 实现要点：
 
