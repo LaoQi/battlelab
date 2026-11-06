@@ -45,6 +45,8 @@ func (p *parser) parseFor() (*Compound, error) {
 			}
 			c.Words = append(c.Words, Word{Segments: tok.Segments(), Text: tok.Text, Pos: tok.Pos, End: tok.End})
 		}
+	} else {
+		c.NoIn = true
 	}
 	if err := p.skipSeparators(); err != nil {
 		return nil, err

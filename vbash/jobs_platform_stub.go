@@ -1,0 +1,22 @@
+//go:build !linux && !darwin
+
+package vbash
+
+type procInfo struct {
+	PID       int
+	PPID      int
+	PGID      int
+	SID       int
+	StartTime uint64
+	State     string
+}
+
+func procTable() []procInfo { return nil }
+
+func procStartTime(pid int) uint64 { return 0 }
+
+func procSid(pid int) (int, bool) { return 0, false }
+
+func reapChildren() int { return 0 }
+
+func setSubreaper() bool { return false }

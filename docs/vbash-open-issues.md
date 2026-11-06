@@ -4,8 +4,8 @@
 > 不替代既有文档：能力口径见 `docs/vbash-capability.md`，范围决策见 `docs/vbash-plan.md`，
 > 实施记录见 `docs/vbash-impl.md`。本文只收「已知但未闭合」的条目，修完一项删一项。
 >
-> 状态：**P1/P2 全部闭合**（大括号展开、`printf` 精度、`$(<file)`、三处递归/规模上限、
-> 管道段/命令替换的函数可见性、复合命令上的 fd 重定向均已实现），遗留项只有 P3 接线卫生，列在 §4。
+> 状态（2026-11-06）：**P0–P2 全部闭合**。上一轮由调用方（tanya 真实试用）实测暴露的 13 项缺陷
+> 已全部修完，见 §6；遗留项只剩 §4 的 P3 接线卫生与本文末尾的已知取舍。
 
 ## 摘要
 
@@ -13,12 +13,24 @@
 |---|---|---|---|
 | 1 | 大括号展开静默字面化 | ~~P1~~ | **已实现**（`vbash/brace.go`） |
 | 2 | `printf` 精度/标志位不生效 | ~~P1~~ | **已实现**（`vbash/printf.go`） |
-| 3 | 后台 `&` / `wait` 与文档自相矛盾 | P2 | **文档已校正**（以实现为准） |
+| 3 | 后台 `&` / `wait` 与文档自相矛盾 | ~~P2~~ | **已实现真异步**（见 §3，文档同步校正） |
 | 4 | `$(<file)` 静默返回空 | ~~P1~~ | **已实现** |
 | 5 | 大括号展开/函数递归无深度上限、大括号无字段数上限 | ~~P1~~ | **已实现**（见 §3.1） |
 | 6 | 管道段/命令替换内看不到已定义的函数 | ~~P2~~ | **已实现**（见 §3.2） |
 | 7 | 复合命令后接带 fd 前缀的重定向解析失败 | ~~P1~~ | **已实现**（见 §3.3） |
 | 8 | 接入侧遗留（死符号、Windows 未真机验证） | P3 | 见 §4 |
+| 9 | heredoc 体内 `$( )`/`$(( ))` 坏、反斜杠转义与续行错 | ~~P0~~ | **已实现**（见 §6.1） |
+| 10 | `test`/`[` 不认负数、把 `010` 当八进制 | ~~P0~~ | **已实现**（见 §6.2） |
+| 11 | `exit -1` 返回 0、`exit abc` 静默 | ~~P0~~ | **已实现**（见 §6.3） |
+| 12 | 循环外 `break`/`continue` 吞掉后续命令 | ~~P0~~ | **已实现**（见 §6.4） |
+| 13 | `for x; do`（省略 `in`）空迭代 | ~~P0~~ | **已实现**（见 §6.5） |
+| 14 | `echo -e` 的 `\c` 与 `\0NNN` | ~~P0~~ | **已实现**（见 §6.6） |
+| 15 | `$*` 双引号内不按 IFS 首字符 | ~~P1~~ | **已实现**（见 §6.7） |
+| 16 | 算术内 `${…}`/`$( )`/`$(( ))` 展开失败 | ~~P0~~ | **已实现**（见 §6.8） |
+| 17 | `set -o pipefail` / `set -u` 被忽略 | ~~P1~~ | **已实现**（见 §6.9） |
+| 18 | `$$` 恒 0（`kill $$` 会误杀宿主进程组） | ~~P0~~ | **已实现**（见 §6.10） |
+| 19 | `${V:off:len}`、`${V^^}`、`${!V}`、`base#`、`n++`、`**` | ~~P2~~ | **已实现**（见 §6.11） |
+| 20 | `printf %q` 用单引号包裹而非逐字符转义 | ~~P2~~ | **已实现**（见 §6.12） |
 
 ## 1 已闭合：大括号展开（P1 → 已实现）
 
@@ -77,7 +89,35 @@
 形态仍真实（`printf '%-42s %8.1f MiB\n' "$d" "$(echo "scale=2; $t/1048576" | bc)"`），
 但它不构成「agent 统计汇报的常规写法」这种量级的论据。
 
-## 3 已校正：后台 `&` / `wait` 的文档矛盾（P2 → 已改文档）
+## 3 已实现：后台 `&` 真异步与进程围栏（原 P2 的文档矛盾，现已改为实现对齐）
+
+### 3.0 真异步（2026-11-07）
+
+原状态为"同步执行"（`sleep 1 & echo done` 等 1010ms）。改为真异步后：
+
+| 用例 | 同步（旧） | 真异步（现） | bash |
+|---|---|---|---|
+| `sleep 2 & echo done` | 2009ms | **~1ms** | ~5ms |
+| `sleep 1 & sleep 1 & sleep 1 & wait` | 3018ms | **1006ms** | 1006ms |
+| `set -e; false & echo after; echo end` | 无输出 rc=1 | `after`/`end` rc=0 | 同 |
+| `$!` | 空 | pid | pid |
+
+配套：`wait`（无参/PID）返回作业状态、`$!` 为最近后台 pid；**作业控制（`jobs`/`kill %N`/`fg`/`bg`）不做**；
+后台命令 stdin 接 `/dev/null`、
+赋值与 `cd` 不回流父 shell（库内 goroutine 需隔离 env，与 bash 子 shell 的偶然共享不同，属有意偏差）。
+
+### 3.1 进程围栏（禁止污染宿主）
+
+目标是"后台进程跟随调用方主进程生命周期 + 退出时保底拦截"，**作业号控制（`fg`/`bg`）不在范围内**。
+`Fence` + `EnableSubreaper()` 提供：**只登记 `&` 分支起的进程**（前台命令归 `CancelCmd`/ctx 管，
+不进围栏——避免每条前台命令一次无人消费的 /proc starttime 读）→
+主进程退出时以登记项为根收集子孙 → 按 `sid != 主 sid` 放行整棵逃逸会话树 →
+按进程组收割 → `Wait4` 清僵尸。2026-11-07 一轮 review 修掉的九项缺陷（围栏漏收 `( ) &` 分支、
+`wait` 已完成作业失效、后台 `<` 丢失、内建/函数 `&` 报 not found、`wait` 无参不等复合分支、
+无作业 `$!` 为 0、围栏表泄漏、死代码、文档失真）均已闭合并由 `vbash/jobs_test.go` 与基准
+`T1/050`–`056` 守护。细节与已知边界（含 darwin 退化）见 `docs/vbash-capability.md` §4.1。
+
+原第三节的文档校正内容仍有效（同步时代的口径），保留如下。
 
 三处表述互不一致，以实现为准校正：
 
@@ -158,8 +198,166 @@
 | 项 | 说明 |
 |---|---|
 | ~~tanya 尚未接线~~ | **已接线**（2026-11-06）：tanya 侧新增 `vbash` 配置项（yaml/env `TANYA_VBASH`）并**默认开启**，`main` 把 `Vbash`/`Environ: os.Environ` 透传给 `tools.Standard`。同轮闭合的解析缺陷见下方 §3.3 |
-| `classifyVbashError` 的 `stderr` 形参未使用 | 签名遗留，无害，顺手清理即可。`tools/shell/vbash.go` |
 | `describeVbash` 未真机验证 | 仅在非 POSIX 宿主（pwsh/cmd）生效，`make cross` 只保证编译。Windows 侧属「实现完成、待验证」 |
+
+## 6 已闭合：调用方真实试用暴露的 13 项（2026-11-06）
+
+来源：tanya 侧开启 vbash 后做了一轮真 bash ↔ vbash 差分实测（约 180 条用例），
+暴露出一批**文档未记录**的缺陷。下表按实际影响排序，全部已修并绑基准。
+
+语料命中率口径：tanya `.tanya/sessions/*.jsonl` 里 1764 条历史 `run_shell` 调用。
+
+### 6.1 heredoc 体内展开（P0，最严重）
+
+原实现 `expandHeredoc` 逐字符扫 `$`、只取第一个 Segment 交给 `parameter()`，而 `parameter()`
+只处理 `SegVar`/`${…}`，遇到 `SegCmdSub`/`SegArith` 直接 `bad substitution`；反斜杠完全没有分支。四个缺陷：
+
+| 写法（未引用终止符） | 修复前 | 修复后（= bash） |
+|---|---|---|
+| `$(echo inner)` | 退出码 1、`bad substitution` | `inner` |
+| `$((2+3))` | 静默输出空 | `5` |
+| `\$b \\c \`` | `\ \\c \`` | `$b \c `` |
+| 行尾 `\` 续行 | 原样保留反斜杠与换行 | 两行接成一行 |
+
+- **修法**：新增 `vbash/lexer.go` 的 `lexHeredocSegments`——把正文按「双引号模式」交给同一套词法
+  （`"`/`'` 不特殊、`\$ \\ \`` 去一层反斜杠、行尾 `\` 吞换行），产出 Segment 序列后
+  `expandHeredoc` 逐段走 `SegLiteral/SegVar/SegBraced/SegArith/SegCmdSub`。原来的手写 `$` 扫描删除。
+- **基准**：`T3h/021`–`030`（命令替换、算术、反斜杠、续行、混合展开、体内引号字面、`$*` 按 IFS、
+  单行混合、引用终止符不展开、展开后接管道）。
+- **单测**：`vbash/fixes_test.go` 的 `TestHeredocBody*`（7 条）。
+
+### 6.2 `test`/`[` 的整数语义（P0）
+
+`test.go` 用算术的 `parseInt`，而它不认符号、且把前导零当八进制。`[ -2 -lt 0 ]` 直接报
+`integer expression expected`（退出码 2）——**`while [ $x -gt 0 ]` 这类递减循环一旦跨过 0 就炸**。
+真 bash 的口径与算术不同：
+
+| 写法 | 算术 | `test` | `exit` |
+|---|---|---|---|
+| `010` | 8（八进制） | **10**（十进制） | 10 |
+| `0x10` | 16 | **报错** `integer expected` | **报错** `numeric argument required` |
+| `-2` / `+3` | 支持 | 支持 | 支持 |
+
+- **修法**：新增 `vbash/numparse.go`，把三种口径拆成 `parseArithInt`（保留八/十六进制）、
+  `parseDecimalInt`（十进制 + 符号），`test` 用后者。诊断文案对齐 bash：
+  `[: abc: integer expected`（原是 `integer expression expected`）。
+- **基准**：`T3c/148`（负数比较）、`T3c/149`（`010` 按十进制）。
+- **单测**：`TestTestBuiltinNegativeIntegers`、`TestTestBuiltinLeadingZeroIsDecimal`、`TestTestBuiltinNonNumericDiagnostic`。
+
+### 6.3 `exit` / `return` 的参数语义（P0）
+
+`exit -1` 返回 0（`parseInt("-1")` 失败 → 保留上次状态）；`exit abc` 静默返回上次状态。三态区分：
+
+| 写法 | 行为 |
+|---|---|
+| `exit -1` / `exit -300` | 255 / 212（`& 0xff`） |
+| `exit +3` / `exit 010` | 3 / 10 |
+| `exit abc` | stderr `exit: abc: numeric argument required`，状态 2，**继续执行** |
+| `exit 1 2` | stderr `exit: too many arguments`，状态 1，**终止** |
+| `f(){ return abc; }` | stderr + `$?`=2，**函数体继续执行到结尾** |
+| `f(){ return 1 2; }` | stderr + **终止整个脚本**（状态 1） |
+
+- **修法**：`statusArg` 返回 `statusKind` 三态（`statusOK`/`statusNumeric`/`statusTooMany`），
+  `builtinExit`/`builtinReturn` 各自决定「继续」还是「终止」。`return` 在函数外告警并返回 2。
+- **基准**：`T3c/140`–`142`。
+- **单测**：`TestExitNegativeWraps`、`TestExitNonNumericContinues`、`TestExitTooManyArguments`。
+
+### 6.4 循环外 `break`/`continue`（P0）
+
+原实现无条件抛出 `loopControl` 错误，外层没人接就一路冒到顶层——`break; echo after` **把 after 吞了**
+（输出为空、退出码 0）。真 bash 是「告警 + 忽略 + 继续」。
+
+- **修法**：`Runner.loopNest` 计数（进入 `for`/`while`/`until` 体 +1），`loopNest == 0` 时打
+  `break: only meaningful in a 'for', 'while', or 'until' loop` 并返回 0。`callFunc` 进入时**清零**并在返回时恢复——
+  bash 里函数内的 `break` 不算循环内（`f(){ break; }; for i in 1 2; do f; echo $i; done` 输出 `1 2`）。
+- **基准**：`T3c/137`–`139`。
+- **单测**：`TestBreakOutsideLoopContinues`、`TestBreakInFunctionInsideLoop`。
+
+### 6.5 `for x; do`（省略 `in`）（P0）
+
+解析器只在看到 `in` 时收集词表，否则 `Words` 为空 → 空迭代（bash 遍历位置参数）。
+
+- **修法**：`Compound.NoIn` 标记，`runFor` 在 `NoIn` 时取 `Env.Args()`。
+- **基准**：`T3c/134`–`136`。**单测**：`TestForWithoutIn`。
+
+### 6.6 `echo -e` 的 `\c` 与 `\0NNN`（P0）
+
+`decodeEchoEscapes` 遇到 `\c` 只是 `return` 已有文本，但换行仍加 → `x\cy; echo tail` 输出两行
+（bash 是 `xtail`）。`\0NNN` 完全不解释。
+
+- **修法**：返回 `(text, stop)`，`stop` 时抑制换行；补 `\0NNN`（1–3 位八进制）、`\xHH`、`\uHHHH`、`\UHHHHHHHH`。
+- **基准**：`T3c/143`、`T3c/144`。**单测**：`TestEchoBackslashC`、`TestEchoOctalEscape`。
+
+### 6.7 `$*` 在双引号内（P1）
+
+三处硬编码 `strings.Join(args, " ")`，`IFS=,` 时 `"$*"` 应得 `a,b,c`。
+
+- **修法**：`Env.JoinArgs()` 取 IFS 首字符（IFS 为空则直接相连、未设置则空格），
+  接入 `applySegment`（引用/未引用两种）、`expandToString`、`expandHeredoc`。
+- **基准**：`T3c/156`、`T3h/027`、`T2/057`。**单测**：`TestStarJoinsWithIFSFirstChar`。
+
+### 6.8 算术内嵌展开（P0）
+
+`$(( ${v:-1} + 1 ))`、`$(( 1 + $(( 2 )) ))` 硬报错（`parameter()` 不认 `SegArith`、`braced()` 处理不了
+嵌套算术），`$(( $((2)) ))` 静默得 0。
+
+- **修法**：`parsePrimary` 的 `$` 分支收敛到 `dollarOperand()`——按定界符切出完整 `$…` 片段，
+  交给 `expandArbitrary()` 展开成文本，再递归 `arith()` 求值。`$#`/`$?` 等特殊参数、`${…}`、
+  `$( )`、`$(( ))` 全部覆盖。
+- **基准**：`T3c/155`、`T2/054`、`T2/056`。**单测**：`TestArithEmbeddedExpansions`。
+
+### 6.9 `set -o pipefail` / `set -u`（P1）
+
+两个选项都被静默忽略。
+
+- **pipefail**：`Runner.PipeFail`，`runPipeline` 在开启时取**首个非零段**的状态
+  （`false|true`→1、`true|false|true`→1、`echo hi|false|echo x`→1 且 stdout 完整）。
+- **nounset**：`Env.NounSet`；`$VAR`、`${VAR}`、赋值右侧、算术裸名、`$1` 未绑定时打
+  `<shell>: line N: NAME: unbound variable` 并以 **127** 退出；`${NAME:-x}` 等带默认值的形态不受影响。
+- **`set` 解析重写**：支持选项簇（`-euo pipefail`）、`-o`/`+o` 带参与无参、`set -- 位置参数`，
+  且**不再把位置参数当选项吃掉**（原实现会导致 `set -- a b; set -o pipefail` 把 `$#` 变成 1）。
+- **基准**：`T3c/145`–`147`。**单测**：`TestSetPipefail`、`TestSetNounset*`、`TestSetOptionClustersKeepPositional`。
+
+### 6.10 `$$` 与内建 `kill` 安全阀（P0，安全问题）
+
+`Env.pid` 从未赋值，`$$` 恒 `0`。危险在 `kill $$`：宿主侧 `kill 0` 等于向**整个进程组**发信号，
+实测能杀穿调用方（上一轮把执行差分的 python 进程判死）。
+
+- **修法**：`NewEnv` 设 `pid = os.Getpid()`；新增第 22 个内建 `kill`（POSIX special builtin，不越界）：
+  `-s SIG`/`-n NUM`/`-SIG`/`--`/`-l`；对 `pid <= 0`（`kill 0` 进程组、`kill -1` 全体）与宿主自身 pid
+  **一律拒绝**（`Operation not permitted`、退出码 1），**但 `-0` 探测自身放行**（不发信号，安全）；
+  其余 pid 经 `platformOps.DeliverSignal` 透传 `syscall.Kill`。
+- **基准**：`T3c/157`、`T3c/158`。**单测**：`TestDollarDollarIsHostPid`、`TestKillRefusesSelfAndGroup`、`TestKillSignalLookup`。
+- **注意**：基准录制**不能出现 `kill 0`**——录制进程与它同组，会把录制自己杀掉（本轮踩过）。
+
+### 6.11 参数/算术扩展语法补齐（P2）
+
+| 语法 | 实现要点 |
+|---|---|
+| `${V:off}` `${V:off:len}` | 负偏移相对末尾；负长度相对**整个值**（不是剩余段）；越界（负长度 < -len）报 `substring expression < 0` |
+| `${V^^}` `${V,,}` `${V^}` `${V,}` | 可带 `[pat]` 限定；只对 ASCII 字母转换 |
+| `${!V}` | 把 V 的**值**当变量名；取不到报 `invalid indirect expansion` |
+| `base#num`（2–64） | `2#101`→5、`16#ff`→255、`36#z`→35；`2#-101` 按 bash 报 `invalid integer constant` |
+| `n++` `n--` `++n` `--n` | `parseAssign` 先识别自增（否则名字被当赋值吃掉）；后置表达式记录起始切片判断是否裸变量名 |
+| `**` | 右结合（`2**3**2`→512），优先级高于 `* / %`，`1+2**3`→9 |
+
+- **基准**：`T3c/150`–`155`。**单测**：`TestSubstring*`、`TestCaseConversionExpansion`、
+  `TestIndirectExpansion`、`TestArithBaseConstant`、`TestArithIncrement`、`TestArithPower`。
+
+### 6.12 `printf %q`（P2）
+
+原实现用 `shellQuote`（单引号包裹），bash 是**逐字符反斜杠转义**：`a b` → `a\ b`，空串 → `''`，
+不可打印字符 → `$'…'`。安全字符集按实测枚举（`% + - . / : = @ _` 与字母数字直接输出，其余加 `\`）。
+
+- **修法**：新增 `vbash/shellquote.go` 的 `shellQuoteEscaped`，43 个字符逐一与 bash 比对零差异。
+- **基准**：`T3c/159`。**单测**：`TestPrintfPercentQ`。
+
+### 6.13 已知取舍（本轮明确不做）
+
+- **heredoc 体内 `$*` 与 `$@` 同现**：bash 有条未文档化怪癖（体内出现 `$@` 时 `$*` 改按空格连接）。
+  不复刻，见 `docs/vbash-capability.md` §3.3.1。
+- **`-c` 与脚本文件的 `exit 1 2` 差异**：`bash -c` 终止、`bash file.sh` 继续。vbash 按 `-c` 口径
+  （`run_shell` 的实际形态）实现。
 
 ## 5 复现环境说明
 

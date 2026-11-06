@@ -19,6 +19,23 @@ func posixPlatform() platformOps {
 		SignalNumber: posixSignalNumber,
 		ExitCode:     posixExitCode,
 		SignalName:   posixSignalName,
+		DeliverSignal: func(pid, sig int) bool {
+			return syscall.Kill(pid, syscall.Signal(sig)) == nil
+		},
+		SetProcessGroup: func(cmd *exec.Cmd) {
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		},
+		CanReap: true,
+		KillProcessGroup: func(pid, sig int) error {
+			if pid <= 0 {
+				return os.ErrProcessDone
+			}
+			err := syscall.Kill(-pid, syscall.Signal(sig))
+			if err == syscall.ESRCH {
+				return os.ErrProcessDone
+			}
+			return err
+		},
 	}
 }
 

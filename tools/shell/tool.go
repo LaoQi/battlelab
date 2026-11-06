@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/LaoQi/battlelab/agent"
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 type Config struct {
@@ -23,6 +24,7 @@ type Config struct {
 	Programs  []string
 	Vbash     bool
 	Environ   func() []string
+	Fence     *vbash.Fence
 }
 
 type request struct {
@@ -53,6 +55,7 @@ type Tool struct {
 	console   Console
 	vbash     bool
 	environ   func() []string
+	fence     *vbash.Fence
 	ttyMu     sync.Mutex
 }
 
@@ -80,6 +83,7 @@ func New(cfg Config) (*Tool, error) {
 		console:   cfg.Console,
 		vbash:     cfg.Vbash,
 		environ:   cfg.Environ,
+		fence:     cfg.Fence,
 	}, nil
 }
 

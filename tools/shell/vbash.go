@@ -36,6 +36,7 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 		ShellName:    vbashShellName(t.profile),
 		ConfigureCmd: platform.ConfigureGroup,
 		CancelCmd:    platform.KillGroup,
+		Fence:        t.fence,
 	}
 	if f := lease.Stdin(); f != nil {
 		cfg.Stdin = f
@@ -70,7 +71,7 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 		return res
 	}
 	res.ExitCode = code
-	t.classifyVbashError(res, &stderr, runErr)
+	t.classifyVbashError(res, runErr)
 	return res
 }
 
@@ -88,7 +89,7 @@ func vbashShellName(p *profile) string {
 	return "bash"
 }
 
-func (t *Tool) classifyVbashError(res *Result, stderr *streamCapture, err error) {
+func (t *Tool) classifyVbashError(res *Result, err error) {
 	if err == nil {
 		return
 	}

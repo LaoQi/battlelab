@@ -164,34 +164,38 @@ func (r *Runner) applyRedirect(io *IO, redir *Redirect, cl *redirectCleanup) err
 }
 
 func (r *Runner) expandHeredoc(body string) (string, error) {
+	segs, err := lexHeredocSegments(body)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
-	i := 0
-	for i < len(body) {
-		c := body[i]
-		if c != '$' {
-			b.WriteByte(c)
-			i++
-			continue
+	for _, seg := range segs {
+		switch seg.Kind {
+		case SegLiteral:
+			b.WriteString(seg.Text)
+		case SegVar, SegBraced:
+			if seg.Kind == SegVar && seg.Inner == "*" {
+				b.WriteString(r.Env.JoinArgs())
+				continue
+			}
+			v, err := r.expn.parameter(seg)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(v)
+		case SegArith:
+			v, err := r.expn.arith(seg.Inner)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(itoa(v))
+		case SegCmdSub:
+			v, err := r.expn.commandSubstitution(seg)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(v)
 		}
-		rest := body[i:]
-		segs, err := lexWordSegments(rest)
-		if err != nil || len(segs) == 0 {
-			b.WriteByte(c)
-			i++
-			continue
-		}
-		first := segs[0]
-		if first.Kind == SegLiteral {
-			b.WriteByte(c)
-			i++
-			continue
-		}
-		v, err := r.expn.parameter(first)
-		if err != nil {
-			return "", err
-		}
-		b.WriteString(v)
-		i += len(first.Text)
 	}
 	return b.String(), nil
 }

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "arith=[5]\nwithvar=[10]\n",
+ "timeout": false
+}

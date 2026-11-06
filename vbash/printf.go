@@ -272,7 +272,8 @@ func applyPrintfSpec(spec *printfSpec, arg string) string {
 		}
 		return padString(spec, arg[:1])
 	case 'b':
-		return padString(spec, decodeEchoEscapes(arg))
+		decoded, _ := decodeEchoEscapes(arg)
+		return padString(spec, decoded)
 	case 'q':
 		if arg == "" {
 			return "''"
@@ -280,7 +281,7 @@ func applyPrintfSpec(spec *printfSpec, arg string) string {
 		if strings.IndexFunc(arg, func(r rune) bool { return !isSafeChar(r) }) < 0 {
 			return arg
 		}
-		return shellQuote(arg)
+		return shellQuoteEscaped(arg)
 	case 'd', 'i', 'u', 'o', 'x', 'X':
 		n, _ := parsePrintfInt(arg)
 		return padNumber(spec, n)

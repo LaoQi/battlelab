@@ -76,7 +76,22 @@ func (a *arithParser) parseComma() (int, error) {
 func (a *arithParser) parseAssign() (int, error) {
 	save := a.i
 	a.skipSpace()
+	if a.peek() == '+' || a.peek() == '-' {
+		if c := a.peekAt(1); c == a.peek() {
+			a.i = save
+			return a.parseTernary()
+		}
+	}
 	name := a.readName()
+	if name != "" {
+		p := a.i
+		a.skipSpace()
+		if a.hasPrefix("++") || a.hasPrefix("--") {
+			a.i = save
+			return a.parseTernary()
+		}
+		a.i = p
+	}
 	if name != "" {
 		a.skipSpace()
 		for _, op := range []string{"<<=", ">>=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "="} {
@@ -190,7 +205,7 @@ var arithOps = []arithOp{
 }
 
 func (a *arithParser) parseBinary(minPrec int) (int, error) {
-	left, err := a.parseUnary()
+	left, err := a.applyPow()
 	if err != nil {
 		return 0, err
 	}
@@ -350,6 +365,9 @@ func (a *arithParser) parsePrimary() (int, error) {
 		return v, nil
 	}
 	if a.peek() >= '0' && a.peek() <= '9' {
+		if v, ok, err := a.readBaseConstant(); ok {
+			return v, err
+		}
 		start := a.i
 		for !a.eof() && ((a.src[a.i] >= '0' && a.src[a.i] <= '9') || a.src[a.i] == 'x' || a.src[a.i] == 'X' ||
 			(a.src[a.i] >= 'a' && a.src[a.i] <= 'f') || (a.src[a.i] >= 'A' && a.src[a.i] <= 'F')) {
@@ -362,67 +380,13 @@ func (a *arithParser) parsePrimary() (int, error) {
 		return v, nil
 	}
 	if a.peek() == '$' {
-		start := a.i
-		a.i++
-		if a.peek() == '{' {
-			depth := 0
-			for !a.eof() {
-				if a.src[a.i] == '}' && depth == 0 {
-					a.i++
-					break
-				}
-				if a.src[a.i] == '{' {
-					depth++
-				} else if a.src[a.i] == '}' {
-					depth--
-				}
-				a.i++
-			}
-		} else if a.peek() == '(' {
-			depth := 0
-			for !a.eof() {
-				if a.src[a.i] == ')' && depth == 0 {
-					a.i++
-					break
-				}
-				if a.src[a.i] == '(' {
-					depth++
-				} else if a.src[a.i] == ')' {
-					depth--
-				}
-				a.i++
-			}
-		} else {
-			for !a.eof() && (isArithNameStart(a.src[a.i]) || (a.src[a.i] >= '0' && a.src[a.i] <= '9')) {
-				a.i++
-			}
-		}
-		text := string(a.src[start:a.i])
-		segs, err := lexWordSegments(text)
+		v, ok, err := a.dollarOperand()
 		if err != nil {
 			return 0, err
 		}
-		var b strings.Builder
-		for _, seg := range segs {
-			if seg.Kind == SegLiteral {
-				b.WriteString(seg.Text)
-				continue
-			}
-			v, err := a.expn.parameter(seg)
-			if err != nil {
-				return 0, err
-			}
-			b.WriteString(v)
+		if ok {
+			return v, nil
 		}
-		inner := strings.TrimSpace(b.String())
-		if inner == "" {
-			return 0, nil
-		}
-		sub, err := a.expn.arith(inner)
-		if err != nil {
-			return 0, err
-		}
-		return sub, nil
 	}
 	name := a.readName()
 	if name != "" {
@@ -438,7 +402,13 @@ func (a *arithParser) parsePrimary() (int, error) {
 			return 0, nil
 		}
 		value, ok := a.env.Lookup(name)
-		if !ok || value == "" {
+		if !ok {
+			if a.env.NounSet {
+				return 0, a.expn.runs.unbound(name)
+			}
+			return 0, nil
+		}
+		if value == "" {
 			return 0, nil
 		}
 		inner, err := a.expn.arith(value)
@@ -448,38 +418,4 @@ func (a *arithParser) parsePrimary() (int, error) {
 		return inner, nil
 	}
 	return 0, runtimeErrf(Pos{}, "syntax error near unexpected token %q", string(a.peek()))
-}
-
-func parseInt(s string) (int, bool) {
-	if s == "" {
-		return 0, false
-	}
-	base := 10
-	text := s
-	if len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
-		base = 16
-		text = s[2:]
-	} else if len(s) > 1 && s[0] == '0' && s[1] != '8' && s[1] != '9' {
-		base = 8
-		text = s[1:]
-	}
-	n := 0
-	for _, r := range text {
-		var d int
-		switch {
-		case r >= '0' && r <= '9':
-			d = int(r - '0')
-		case r >= 'a' && r <= 'f':
-			d = int(r-'a') + 10
-		case r >= 'A' && r <= 'F':
-			d = int(r-'A') + 10
-		default:
-			return 0, false
-		}
-		if d >= base {
-			return 0, false
-		}
-		n = n*base + d
-	}
-	return n, true
 }

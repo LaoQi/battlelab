@@ -23,6 +23,9 @@ type Runner struct {
 	CancelCmd    func(*exec.Cmd) error
 
 	expn          *expansion
+	jobs          *jobTable
+	fence         *Fence
+	bg            bool
 	ErrExit       bool
 	warnedFd      bool
 	subStatus     int
@@ -30,6 +33,9 @@ type Runner struct {
 	funcDepth     int
 	condDepth     int
 	exemptErrExit bool
+	loopNest      int
+	PipeFail      bool
+	XTrace        bool
 }
 
 type Handler func(ctx context.Context, r *Runner, argv []string, io *IO) (int, error)
@@ -70,6 +76,7 @@ type Config struct {
 	Handler      Handler
 	ConfigureCmd func(*exec.Cmd)
 	CancelCmd    func(*exec.Cmd) error
+	Fence        *Fence
 }
 
 func NewRunner(ctx context.Context, cfg Config) *Runner {
@@ -102,6 +109,7 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 		Exec:         cfg.Handler,
 		ConfigureCmd: cfg.ConfigureCmd,
 		CancelCmd:    cfg.CancelCmd,
+		fence:        cfg.Fence,
 	}
 	out := cfg.Stdout
 	errw := cfg.Stderr
@@ -111,12 +119,27 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 	return r
 }
 
+func (r *Runner) unbound(name string) error {
+	return r.unboundAt(name, Pos{})
+}
+
+func (r *Runner) unboundAt(name string, pos Pos) error {
+	r.diagf(r.IO.Err, pos, "%s: unbound variable", name)
+	return ExitRequest{Code: 127}
+}
+
 func (r *Runner) warnUnsupported(feature string, pos Pos) {
 	r.diagf(r.IO.Err, pos, "%s: %s: unsupported by vbash", feature, "not implemented")
 }
 
 func (r *Runner) RunList(list *List) (int, error) {
-	return r.runList(list, r.IO)
+	r.initJobs()
+	code, err := r.runList(list, r.IO)
+	var exitReq ExitRequest
+	if err != nil && asExit(err, &exitReq) {
+		return exitReq.Code, nil
+	}
+	return code, err
 }
 
 func (r *Runner) branch(env *Env, io *IO) *Runner {
@@ -128,6 +151,8 @@ func (r *Runner) branch(env *Env, io *IO) *Runner {
 		Exec:         r.Exec,
 		ConfigureCmd: r.ConfigureCmd,
 		CancelCmd:    r.CancelCmd,
+		fence:        r.fence,
+		bg:           r.bg,
 	}
 	sub.expn = &expansion{env: env, runs: sub, io: io}
 	sub.funcDepth = r.funcDepth
@@ -152,12 +177,19 @@ func (r *Runner) runList(list *List, io *IO) (int, error) {
 		if err := r.Ctx.Err(); err != nil {
 			return r.Env.Status(), err
 		}
-		c, err := r.runAndOr(item.AndOr, io)
-		code = c
+		var c int
+		var err error
+		if item.Sep == OpAmp {
+			c, err = r.runBackground(item.AndOr, io)
+			code = 0
+		} else {
+			c, err = r.runAndOr(item.AndOr, io)
+			code = c
+		}
 		if err != nil {
 			return code, err
 		}
-		if len(item.AndOr.Pipes) == 1 {
+		if item.Sep != OpAmp && len(item.AndOr.Pipes) == 1 {
 			if e := r.checkErrExit(); e != nil {
 				return code, e
 			}
@@ -277,6 +309,14 @@ func (r *Runner) runPipeline(pl *Pipeline, io *IO) (int, error) {
 		}
 	}
 	code := results[len(results)-1].code
+	if r.PipeFail {
+		for _, res := range results {
+			if res.code != 0 {
+				code = res.code
+				break
+			}
+		}
+	}
 	if pl.Bang {
 		code = btoi(code == 0)
 	}

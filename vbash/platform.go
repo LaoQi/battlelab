@@ -8,20 +8,24 @@ import (
 )
 
 type platformOps struct {
-	DevNull      []string
-	DevNullFold  bool
-	DefaultPath  string
-	PathSep      string
-	ExecSuffixes []string
-	FromHost     func(string) string
-	ToHost       func(cwd, target string) string
-	IsExec       func(name string, st os.FileInfo) bool
-	MatchName    func(pattern, name string) bool
-	Argv0        func(string) string
-	DriveOf      func(string) (string, bool)
-	ExitCode     func(*exec.ExitError) int
-	SignalNumber func(*exec.ExitError) int
-	SignalName   func(int) string
+	DevNull          []string
+	DevNullFold      bool
+	DefaultPath      string
+	PathSep          string
+	ExecSuffixes     []string
+	FromHost         func(string) string
+	ToHost           func(cwd, target string) string
+	IsExec           func(name string, st os.FileInfo) bool
+	MatchName        func(pattern, name string) bool
+	Argv0            func(string) string
+	DriveOf          func(string) (string, bool)
+	ExitCode         func(*exec.ExitError) int
+	SignalNumber     func(*exec.ExitError) int
+	SignalName       func(int) string
+	DeliverSignal    func(pid, sig int) bool
+	SetProcessGroup  func(*exec.Cmd)
+	KillProcessGroup func(pid int, sig int) error
+	CanReap          bool
 }
 
 func fillPlatform(p platformOps) platformOps {
@@ -55,6 +59,9 @@ func fillPlatform(p platformOps) platformOps {
 	if p.SignalNumber == nil {
 		p.SignalNumber = func(*exec.ExitError) int { return 1 }
 	}
+	if p.DeliverSignal == nil {
+		p.DeliverSignal = func(int, int) bool { return false }
+	}
 	if p.ExitCode == nil {
 		p.ExitCode = func(err *exec.ExitError) int {
 			if code := err.ExitCode(); code >= 0 {
@@ -65,6 +72,12 @@ func fillPlatform(p platformOps) platformOps {
 	}
 	if p.SignalName == nil {
 		p.SignalName = func(int) string { return "Terminated" }
+	}
+	if p.SetProcessGroup == nil {
+		p.SetProcessGroup = func(*exec.Cmd) {}
+	}
+	if p.KillProcessGroup == nil {
+		p.KillProcessGroup = func(int, int) error { return os.ErrProcessDone }
 	}
 	return p
 }

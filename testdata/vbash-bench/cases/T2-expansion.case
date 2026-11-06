@@ -235,3 +235,26 @@ command:
 # 连写 13 组共 8192 个字段，仍在上限内
 command:
   printf '%s\n' {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b} | wc -l
+
+--- name: T2/054-heredoc-adjacent-expansion-in-assignment
+# 赋值右侧的 $( ) / $(( )) / ${x:-} 混写
+command:
+  v=4
+  s="a$(echo b)c$((v+1))d${nope:-e}"
+  echo "$s"
+
+--- name: T2/055-empty-quotes-in-heredoc-body
+command:
+  cat <<EOF
+  []
+  EOF
+
+--- name: T2/056-arith-dollar-brace-with-op
+command:
+  v=4
+  echo $(( ${v:-1} + ${nope:-2} ))
+
+--- name: T2/057-star-quoted-default-ifs
+command:
+  set -- a b c
+  echo "[$*] [$@] [$#]"

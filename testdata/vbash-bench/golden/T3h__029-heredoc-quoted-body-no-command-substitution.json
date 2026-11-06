@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "cmd=[$(echo inner)] arith=[$((2+3))]\n",
+ "timeout": false
+}

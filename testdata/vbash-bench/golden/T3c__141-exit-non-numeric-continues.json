@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: exit: abc: numeric argument required\n",
+ "stdout": "after\n",
+ "timeout": false
+}

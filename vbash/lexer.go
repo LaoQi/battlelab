@@ -842,3 +842,51 @@ func (l *lexer) readHeredocBody() *Heredoc {
 	}
 	return h
 }
+
+func lexHeredocSegments(text string) ([]Segment, error) {
+	if text == "" {
+		return nil, nil
+	}
+	l := newLexer(text)
+	w := newWordBuilder(ModeDoubleQuoted, Pos{Line: 1, Col: 1})
+	for !l.eof() {
+		r := l.peek()
+		switch r {
+		case '\\':
+			pos := l.pos()
+			l.advance()
+			if l.eof() {
+				w.literalRune('\\')
+				continue
+			}
+			n := l.peek()
+			switch n {
+			case '$', '`', '\\':
+				l.advance()
+				w.setMode(ModeLiteral, pos)
+				w.literalRune(n)
+				w.setMode(ModeDoubleQuoted, l.pos())
+			case '\n':
+				l.advance()
+			default:
+				w.literalRune('\\')
+			}
+		case '`':
+			return nil, unsupported("反引号命令替换", "改用 $(...)", l.pos())
+		case '$':
+			expanded, err := l.readDollar(w)
+			if err != nil {
+				return nil, err
+			}
+			if !expanded {
+				l.advance()
+				w.literalRune('$')
+			}
+		default:
+			l.advance()
+			w.literalRune(r)
+		}
+	}
+	w.mark()
+	return w.finish(), nil
+}

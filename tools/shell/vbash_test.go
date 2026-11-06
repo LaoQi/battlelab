@@ -4,9 +4,12 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 func testVbashTool(t *testing.T, mutate ...func(*Config)) *Tool {
@@ -228,9 +231,25 @@ func TestVbashDescriptionMentionsInterpreter(t *testing.T) {
 
 func TestVbashDescriptionListsUnsupported(t *testing.T) {
 	desc := testVbashTool(t).toolDesc()
-	for _, want := range []string{"case", "[[ ]]", "反引号", "<<<", "数组", "pipefail"} {
+	for _, want := range []string{"case", "[[ ]]", "反引号", "<<<", "数组", "进程替换"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("描述应列出不支持构造 %q，避免模型只能试错: %q", want, desc)
 		}
+	}
+}
+
+func TestVbashFenceWiring(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("平台不支持围栏")
+	}
+	fence := vbash.NewFence()
+	tool := testVbashTool(t, func(c *Config) { c.Fence = fence })
+	res := tool.run(context.Background(), request{Command: "sleep 43 & echo pid=$!", TimeoutSec: 10})
+	if !strings.Contains(res.String(), "pid=") {
+		t.Fatalf("后台命令未启动: %q", res.String())
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := fence.Reap(); got != 1 {
+		t.Fatalf("经 Tool 起的后台作业应进围栏，Reap 清理 %d 个", got)
 	}
 }

@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: continue: only meaningful in a `for', `while', or `until' loop\n",
+ "stdout": "a\nb\n",
+ "timeout": false
+}

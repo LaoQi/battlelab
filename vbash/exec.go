@@ -1,6 +1,7 @@
 package vbash
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,36 +12,46 @@ import (
 )
 
 func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
-	name := argv[0]
+	full, code, ok := r.resolveExternal(argv[0], io, pos)
+	if !ok {
+		return code, nil
+	}
+	return r.spawn(full, argv, io, pos)
+}
+
+func (r *Runner) resolveExternal(name string, io *IO, pos Pos) (string, int, bool) {
+	if r.Exec != nil {
+		return name, 0, true
+	}
 	if isPathLike(name) {
 		host := r.hostPath(name)
 		st, err := os.Stat(host)
 		if err == nil && st.IsDir() {
 			r.diagf(io.Err, pos, "%s: Is a directory", name)
-			return 126, nil
+			return "", 126, false
 		}
 		if err == nil {
 			if !plat.IsExec(host, st) {
 				r.diagf(io.Err, pos, "%s: Permission denied", name)
-				return 126, nil
+				return "", 126, false
 			}
-			return r.spawn(host, argv, io, pos)
+			return host, 0, true
 		}
 		if os.IsNotExist(err) {
 			r.diagf(io.Err, pos, "%s: No such file or directory", name)
-			return 127, nil
+			return "", 127, false
 		}
 		if os.IsPermission(err) {
 			r.diagf(io.Err, pos, "%s: Permission denied", name)
-			return 126, nil
+			return "", 126, false
 		}
 	}
 	resolved, err := r.lookPath(name)
 	if err != nil {
 		r.diagf(io.Err, pos, "%s: command not found", name)
-		return 127, nil
+		return "", 127, false
 	}
-	return r.spawn(resolved, argv, io, pos)
+	return resolved, 0, true
 }
 
 func (r *Runner) lookPath(name string) (string, error) {
@@ -108,21 +119,18 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 		r.warnedFd = true
 		r.diagf(io.Err, pos, "fd 0: closed stdin not passed to external commands (vbash limitation)")
 	}
-	cmd := exec.CommandContext(r.Ctx, full, argv[1:]...)
-	cmd.Args[0] = plat.Argv0(argv[0])
-	cmd.Dir = r.hostDir()
-	cmd.Env = r.Env.Environ()
-	cmd.Stdin = io.In
-	cmd.Stdout = io.Out
-	cmd.Stderr = io.Err
-	if r.ConfigureCmd != nil {
-		r.ConfigureCmd(cmd)
-	}
-	if r.CancelCmd != nil {
-		cmd.Cancel = func() error { return r.CancelCmd(cmd) }
-		cmd.WaitDelay = waitDelay
-	}
-	err := cmd.Run()
+	cmd := r.newCmd(r.Ctx, full, argv, io)
+	err := func() error {
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		if r.bg {
+			done := make(chan struct{})
+			defer close(done)
+			r.fence.register(cmd.Process.Pid, done)
+		}
+		return cmd.Wait()
+	}()
 	if err == nil {
 		return 0, nil
 	}
@@ -139,6 +147,25 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 	}
 	r.diagf(io.Err, pos, "%s: %s", argv[0], errText(err))
 	return 1, nil
+}
+
+func (r *Runner) newCmd(ctx context.Context, full string, argv []string, io *IO) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, full, argv[1:]...)
+	cmd.Args[0] = plat.Argv0(argv[0])
+	cmd.Dir = r.hostDir()
+	cmd.Env = r.Env.Environ()
+	cmd.Stdin = io.In
+	cmd.Stdout = io.Out
+	cmd.Stderr = io.Err
+	plat.SetProcessGroup(cmd)
+	if r.ConfigureCmd != nil {
+		r.ConfigureCmd(cmd)
+	}
+	if r.CancelCmd != nil {
+		cmd.Cancel = func() error { return r.CancelCmd(cmd) }
+		cmd.WaitDelay = waitDelay
+	}
+	return cmd
 }
 
 func (r *Runner) diagSignal(errw io.Writer, pos Pos, signum int, argv []string) {

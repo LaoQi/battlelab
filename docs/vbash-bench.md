@@ -24,7 +24,7 @@ testdata/vbash-bench/
 │   ├── T3-controlflow.case   28 条  for/if/while/case/函数/分组 → 层级 T3c
 │   ├── C-corpus.case         30 条  真实语料高频形态（脱敏改写）
 │   └── X-edge.case           30 条  边界鲁棒性（不崩不挂）
-├── golden/           基准期望（228 个 json，由 run.py --record 生成，勿手改）
+├── golden/           基准期望（268 个 json，由 run.py --record 生成，勿手改）
 ├── run.py            运行器：录制 / 回放 / 比对 / 门槛判定
 └── tools/
     ├── gen_corpus_cases.py   从会话 jsonl 抽取高频形态并脱敏
@@ -68,7 +68,7 @@ files: {}
 cd testdata/vbash-bench
 
 ./run.py --record                       # 用真 bash 重新生成 golden
-./run.py --target /bin/bash             # 自检：应 228/228
+./run.py --target /bin/bash             # 自检：应 268/268
 ./run.py --target ../../vbash           # 测被测实现
 ./run.py --target ./mybash --filter T3  # 只跑 heredoc/控制流
 ./run.py --target ./mybash --verbose    # 打印失败详情与 diff
@@ -101,7 +101,7 @@ cd testdata/vbash-bench
 
 | 被测 | 结果 |
 |---|---|
-| 真 bash 5.3 | **228/228（100%）** |
+| 真 bash 5.3 | **268/268（100%）** |
 | `reference-naive.py` | 见 run.py `--target ./tools/reference-naive.py` 实跑 |
 
 分层建议门槛（对应 `vbash.md` §7 的实施顺序）：

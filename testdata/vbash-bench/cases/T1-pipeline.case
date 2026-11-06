@@ -212,3 +212,74 @@ command:
 command:
   exec 3> f3.txt; echo hi >&3; exec 3>&-; cat f3.txt
 files: {}
+
+--- name: T1/043-background-does-not-block
+# & 必须真异步：后台命令不得阻塞后续命令（真 bash 立刻返回，不等 sleep）
+command:
+  sleep 2 & echo launched=$((1+1))
+
+--- name: T1/044-background-multiple-parallel
+# 三个 1s 后台并行：总耗时应约 1s 而非 3s（真异步的下限验证）
+command:
+  sleep 1 & sleep 1 & sleep 1 & wait; echo done
+
+--- name: T1/045-background-exit-status
+# 后台命令自身返回 0，$? 不受其失败影响
+command:
+  false & echo st=$?
+
+--- name: T1/046-background-errexit
+# set -e 下后台失败不触发退出（bash 语义：& 在子 shell 里跑，自身返回 0）
+command:
+  set -e; false & echo after; echo end
+
+--- name: T1/047-background-pid
+# $! 为最近一个后台作业的 pid（非空且为数字）
+command:
+  sleep 0.1 & p=$!; [ -n "$p" ] && [ "$p" -gt 0 ] && echo pid-ok
+
+--- name: T1/048-background-wait-status
+# wait 指定 pid 返回该作业的退出码
+command:
+  sh -c 'exit 3' & p=$!; wait $p; echo st=$?
+
+--- name: T1/049-background-env-isolated
+# 后台命令的环境改动不回写父 shell
+command:
+  x=1; x=2 & echo "x=$x"
+
+--- name: T1/050-background-subshell-wait-ordering
+# wait 无参必须等待复合 & 分支（子 shell）完成，输出顺序 a 后 b
+command:
+  ( sleep 0.2; echo a ) & wait; echo b
+
+--- name: T1/051-background-wait-completed-status
+# 作业已结束后 wait PID 仍能取到退出状态（状态保留到被消费）
+command:
+  sh -c 'exit 3' & p=$!; sleep 0.3; wait $p; echo st=$?
+
+--- name: T1/052-background-stdin-redirect
+# 后台命令的 < 重定向必须生效（不被 /dev/null 覆盖）
+command:
+  echo hi > in.txt; cat < in.txt & sleep 0.3
+
+--- name: T1/053-background-bang-empty-no-jobs
+# 从未起过后台作业时 $! 为空
+command:
+  echo "bang=[$!]"
+
+--- name: T1/054-background-bang-unbound-under-nounset
+# set -u 下无作业的 $! 报 unbound（bash 一致）
+command:
+  set -u; echo $!
+expect_exit: 127
+
+--- name: T1/055-background-builtin-and-func
+# 内建与函数在 & 位正常执行（不查 PATH）
+command:
+  f(){ echo fn; }; f & export X=1 & wait
+
+--- name: T1/056-background-bang-persists-after-wait
+# 作业被 wait 消费后 $! 仍保留最后后台 pid
+command:
+  sh -c 'exit 0' & p=$!; wait $p; [ "$p" = "$!" ] && echo same

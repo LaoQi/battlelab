@@ -57,6 +57,9 @@ func (r *Runner) callFunc(name string, argv []string, io *IO, pos Pos) (int, boo
 	local.SetArgs(argv[1:])
 	local.arg0 = name
 	local.inFunc = true
+	savedLoop := r.loopNest
+	r.loopNest = 0
+	defer func() { r.loopNest = savedLoop }()
 	r.Env = local
 	r.expn = &expansion{env: local, runs: r, io: r.IO}
 	defer func() {

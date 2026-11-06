@@ -2,6 +2,7 @@ package vbash
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -28,6 +29,7 @@ var builtins = map[string]builtinFunc{
 	"local":    builtinLocal,
 	"break":    builtinBreak,
 	"continue": builtinContinue,
+	"kill":     builtinKill,
 	"test":     builtinTest,
 	"[":        builtinTest,
 }
@@ -72,11 +74,17 @@ func builtinLocal(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 }
 
 func builtinBreak(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
+	if r.loopDepth() == 0 {
+		return r.outsideLoop("break", pos)
+	}
 	n := loopDepthArg(argv)
 	return 0, &loopControl{signal: loopBreak, depth: n}
 }
 
 func builtinContinue(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
+	if r.loopDepth() == 0 {
+		return r.outsideLoop("continue", pos)
+	}
 	n := loopDepthArg(argv)
 	return 0, &loopControl{signal: loopContinue, depth: n}
 }
@@ -91,7 +99,42 @@ func loopDepthArg(argv []string) int {
 }
 
 func builtinWait(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
-	return 0, nil
+	args := argv[1:]
+	r.initJobs()
+	if len(args) == 0 {
+		for _, j := range r.jobs.pending() {
+			<-j.done
+		}
+		return 0, nil
+	}
+	status := 0
+	for _, a := range args {
+		j := waitTarget(r, a)
+		if j == nil {
+			pid, ok := parseDecimalInt(a)
+			_ = pid
+			if ok {
+				r.diagfName(io.Err, pos, "wait", "pid %s is not a child of this shell", a)
+			} else {
+				r.diagfName(io.Err, pos, "wait", "%s: not a pid or valid job spec", a)
+			}
+			status = 127
+			continue
+		}
+		<-j.done
+		code, _ := j.status()
+		status = code
+		r.jobs.consume(j)
+	}
+	return status, nil
+}
+
+func waitTarget(r *Runner, arg string) *job {
+	pid, ok := parseDecimalInt(arg)
+	if !ok {
+		return nil
+	}
+	return r.jobs.byPid(pid)
 }
 
 func builtinColon(r *Runner, argv []string, io *IO, pos Pos) (int, error) { return 0, nil }
@@ -133,20 +176,23 @@ func builtinEcho(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	}
 	text := strings.Join(args, " ")
 	if interpret {
-		text = decodeEchoEscapes(text)
+		decoded, stop := decodeEchoEscapes(text)
+		text = decoded
+		if stop {
+			newline = false
+		}
 	}
-	out := io.Out
 	if newline {
 		text += "\n"
 	}
-	if err := io.WriteString(out, text); err != nil {
+	if err := io.WriteString(io.Out, text); err != nil {
 		r.diagfName(io.Err, pos, "echo", "write error: %s", err.Error())
 		return 1, nil
 	}
 	return 0, nil
 }
 
-func decodeEchoEscapes(s string) string {
+func decodeEchoEscapes(s string) (string, bool) {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -175,13 +221,71 @@ func decodeEchoEscapes(s string) string {
 		case 'e', 'E':
 			b.WriteByte(0x1b)
 		case 'c':
-			return b.String()
+			return b.String(), true
+		case '0':
+			n, used := readOctalDigits(s[i+1:], 3)
+			b.WriteByte(byte(n))
+			i += used
+		case 'x':
+			n, used := readHexDigits(s[i+1:], 2)
+			if used == 0 {
+				b.WriteString("\\x")
+				continue
+			}
+			b.WriteByte(byte(n))
+			i += used
+		case 'u':
+			n, used := readHexDigits(s[i+1:], 4)
+			if used == 0 {
+				b.WriteString("\\u")
+				continue
+			}
+			b.WriteRune(rune(n))
+			i += used
+		case 'U':
+			n, used := readHexDigits(s[i+1:], 8)
+			if used == 0 {
+				b.WriteString("\\U")
+				continue
+			}
+			b.WriteRune(rune(n))
+			i += used
 		default:
 			b.WriteByte('\\')
 			b.WriteByte(s[i])
 		}
 	}
-	return b.String()
+	return b.String(), false
+}
+
+func readOctalDigits(s string, max int) (int, int) {
+	n, used := 0, 0
+	for used < max && used < len(s) && s[used] >= '0' && s[used] <= '7' {
+		n = n*8 + int(s[used]-'0')
+		used++
+	}
+	return n, used
+}
+
+func readHexDigits(s string, max int) (int, int) {
+	n, used := 0, 0
+	for used < max && used < len(s) {
+		c := s[used]
+		var d int
+		switch {
+		case c >= '0' && c <= '9':
+			d = int(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = int(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = int(c-'A') + 10
+		default:
+			return n, used
+		}
+		n = n*16 + d
+		used++
+	}
+	return n, used
 }
 
 func builtinPrintf(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
@@ -322,38 +426,102 @@ func builtinSet(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 		}
 		return 0, nil
 	}
-	dashCount := 0
-	for _, a := range args {
+	i := 0
+	for i < len(args) {
+		a := args[i]
 		if a == "--" {
-			dashCount++
+			r.Env.SetArgs(append([]string(nil), args[i+1:]...))
+			return 0, nil
+		}
+		if a == "-" {
+			i++
+			continue
+		}
+		if len(a) < 2 || (a[0] != '-' && a[0] != '+') || a[1] == '-' {
 			break
 		}
-		if len(a) > 1 && (a[0] == '-' || a[0] == '+') && a[1] == '-' {
-			continue
-		}
-		if len(a) > 1 && a[0] == '-' {
-			if strings.ContainsAny(a, "e") {
-				r.ErrExit = true
+		on := a[0] == '-'
+		i++
+		for _, c := range a[1:] {
+			if c == 'o' {
+				if i < len(args) && !isOptionWord(args[i]) {
+					if err := r.setOption(args[i], on, io, pos); err != nil {
+						return 2, nil
+					}
+					i++
+					continue
+				}
+				r.printOptions(io, on)
+				continue
 			}
-			dashCount++
-			continue
+			if err := r.setOption(string(c), on, io, pos); err != nil {
+				return 2, nil
+			}
 		}
-		if len(a) > 1 && a[0] == '+' {
-			dashCount++
-			continue
-		}
-		break
 	}
-	rest := args
-	if dashCount > 0 {
-		rest = args[dashCount:]
+	if i < len(args) {
+		r.Env.SetArgs(append([]string(nil), args[i:]...))
 	}
-	if dashCount > 0 && len(rest) == 0 {
-		r.Env.SetArgs(nil)
-		return 0, nil
-	}
-	r.Env.SetArgs(rest)
 	return 0, nil
+}
+
+func isOptionWord(s string) bool {
+	if len(s) > 1 && (s[0] == '-' || s[0] == '+') {
+		return true
+	}
+	return false
+}
+
+func (r *Runner) setOption(name string, on bool, io *IO, pos Pos) error {
+	switch name {
+	case "e", "errexit":
+		r.ErrExit = on
+	case "u", "nounset":
+		r.Env.NounSet = on
+	case "x", "xtrace":
+		r.XTrace = on
+	case "pipefail":
+		r.PipeFail = on
+	default:
+		if !knownOption(name) {
+			r.diagfName(io.Err, pos, "set", "%s: invalid option name", name)
+			return runtimeErrf(pos, "invalid option")
+		}
+	}
+	return nil
+}
+
+func knownOption(name string) bool {
+	switch name {
+	case "a", "allexport", "b", "notify", "f", "noglob", "h", "hashall",
+		"m", "monitor", "n", "noexec", "v", "verbose", "C", "noclobber",
+		"E", "errtrace", "T", "functrace", "H", "histexpand", "B", "braceexpand",
+		"P", "physical", "t", "onecmd", "k", "keyword", "p", "privileged",
+		"i", "interactive", "s", "stdin", "l", "login", "c", "N":
+		return true
+	}
+	return false
+}
+
+func (r *Runner) printOptions(io *IO, on bool) {
+	if !on {
+		return
+	}
+	for _, opt := range []struct {
+		name string
+		on   bool
+	}{
+		{"errexit", r.ErrExit},
+		{"nounset", r.Env.NounSet},
+		{"pipefail", r.PipeFail},
+		{"xtrace", r.XTrace},
+	} {
+		state := "off"
+		if opt.on {
+			state = "on"
+		}
+		io.WriteString(io.Out, fmt.Sprintf("%-15s\t%s\n", opt.name, state))
+	}
 }
 
 func builtinShift(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
@@ -371,27 +539,55 @@ func builtinShift(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	return 0, nil
 }
 
+type statusKind int
+
+const (
+	statusOK statusKind = iota
+	statusNumeric
+	statusTooMany
+)
+
 func builtinExit(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
-	code := r.Env.Status()
-	if len(argv) > 1 {
-		if v, ok := parseInt(argv[1]); ok {
-			code = v & 0xff
-		}
+	code, kind := statusArg(r, argv, io, pos, "exit")
+	switch kind {
+	case statusTooMany:
+		return 1, ExitRequest{Code: 1}
+	case statusNumeric:
+		return 2, nil
 	}
 	return code, ExitRequest{Code: code}
 }
 
 func builtinReturn(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
-	code := r.Env.Status()
-	if len(argv) > 1 {
-		if v, ok := parseInt(argv[1]); ok {
-			code = v & 0xff
-		}
+	code, kind := statusArg(r, argv, io, pos, "return")
+	if kind == statusTooMany {
+		return 1, ExitRequest{Code: 1}
 	}
 	if !r.Env.inFunc {
 		r.diagfName(io.Err, pos, "return", "can only `return' from a function or sourced script")
+		return 2, nil
+	}
+	if kind == statusNumeric {
+		return 2, ReturnRequest{Code: 2}
 	}
 	return code, ReturnRequest{Code: code}
+}
+
+func statusArg(r *Runner, argv []string, io *IO, pos Pos, name string) (int, statusKind) {
+	code := r.Env.Status()
+	if len(argv) < 2 {
+		return code, statusOK
+	}
+	if len(argv) > 2 {
+		r.diagfName(io.Err, pos, name, "too many arguments")
+		return 1, statusTooMany
+	}
+	v, ok := parseDecimalInt(argv[1])
+	if !ok {
+		r.diagfName(io.Err, pos, name, "%s: numeric argument required", argv[1])
+		return 2, statusNumeric
+	}
+	return v & 0xff, statusOK
 }
 
 func builtinRead(r *Runner, argv []string, io *IO, pos Pos) (int, error) {

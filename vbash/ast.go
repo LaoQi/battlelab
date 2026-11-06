@@ -67,6 +67,7 @@ type Compound struct {
 	Kind  CompoundKind
 	Name  string
 	Words []Word
+	NoIn  bool
 	Cond  *List
 	Body  *List
 	Elifs []*CondClause

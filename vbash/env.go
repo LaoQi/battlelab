@@ -1,6 +1,7 @@
 package vbash
 
 import (
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -13,19 +14,21 @@ type Var struct {
 }
 
 type Env struct {
-	vars   map[string]*Var
-	args   []string
-	arg0   string
-	dir    string
-	home   string
-	prev   int
-	pid    int
-	inFunc bool
-	locals []string
+	vars    map[string]*Var
+	args    []string
+	arg0    string
+	dir     string
+	home    string
+	prev    int
+	pid     int
+	inFunc  bool
+	jobs    *jobTable
+	locals  []string
+	NounSet bool
 }
 
 func NewEnv() *Env {
-	e := &Env{vars: map[string]*Var{}}
+	e := &Env{vars: map[string]*Var{}, pid: os.Getpid()}
 	e.Set("IFS", " \t\n", false)
 	return e
 }
@@ -63,7 +66,12 @@ func (e *Env) Lookup(name string) (string, bool) {
 	case "$":
 		return strconv.Itoa(e.pid), true
 	case "!":
-		return "", true
+		if e.jobs != nil {
+			if pid, ok := e.jobs.lastPid(); ok {
+				return strconv.Itoa(pid), true
+			}
+		}
+		return "", false
 	case "-":
 		return "", true
 	case "PWD":
@@ -182,14 +190,16 @@ func (e *Env) markLocal(name string) {
 
 func (e *Env) Clone() *Env {
 	c := &Env{
-		vars:   make(map[string]*Var, len(e.vars)),
-		args:   append([]string(nil), e.args...),
-		arg0:   e.arg0,
-		dir:    e.dir,
-		home:   e.home,
-		prev:   e.prev,
-		pid:    e.pid,
-		inFunc: e.inFunc,
+		vars:    make(map[string]*Var, len(e.vars)),
+		args:    append([]string(nil), e.args...),
+		arg0:    e.arg0,
+		dir:     e.dir,
+		home:    e.home,
+		prev:    e.prev,
+		pid:     e.pid,
+		inFunc:  e.inFunc,
+		jobs:    e.jobs,
+		NounSet: e.NounSet,
 	}
 	c.locals = append([]string(nil), e.locals...)
 	for name, v := range e.vars {
@@ -211,6 +221,18 @@ func (e *Env) Status() int { return e.prev }
 func (e *Env) SetStatus(n int) { e.prev = n }
 
 func (e *Env) Chdir(dir string) { e.dir = dir }
+
+func (e *Env) JoinArgs() string {
+	sep := " "
+	if v, ok := e.Lookup("IFS"); ok {
+		if v == "" {
+			sep = ""
+		} else {
+			sep = v[:1]
+		}
+	}
+	return strings.Join(e.args, sep)
+}
 
 func (e *Env) IFS() string {
 	v, ok := e.Lookup("IFS")

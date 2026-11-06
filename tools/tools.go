@@ -5,6 +5,7 @@ import (
 	"github.com/LaoQi/battlelab/tools/builtin"
 	"github.com/LaoQi/battlelab/tools/image"
 	"github.com/LaoQi/battlelab/tools/shell"
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 type Options struct {
@@ -16,6 +17,7 @@ type Options struct {
 	Programs      []string
 	Vbash         bool
 	Environ       func() []string
+	Fence         *vbash.Fence
 	ImageMaxBytes int
 	ImageResize   bool
 	ImageDetail   string
@@ -31,6 +33,7 @@ func Shell(o Options) (*shell.Tool, error) {
 		Programs:  o.Programs,
 		Vbash:     o.Vbash,
 		Environ:   o.Environ,
+		Fence:     o.Fence,
 	})
 }
 

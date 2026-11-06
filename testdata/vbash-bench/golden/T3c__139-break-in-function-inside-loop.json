@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: break: only meaningful in a `for', `while', or `until' loop\n/bin/bash: line 1: break: only meaningful in a `for', `while', or `until' loop\n",
+ "stdout": "body\nloop1\nbody\nloop2\n",
+ "timeout": false
+}

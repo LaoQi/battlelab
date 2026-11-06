@@ -107,10 +107,13 @@ func binaryTest(left, op, right string) (bool, error) {
 	case ">":
 		return left > right, nil
 	case "-eq", "-ne", "-lt", "-le", "-gt", "-ge":
-		a, ok1 := parseInt(left)
-		b, ok2 := parseInt(right)
-		if !ok1 || !ok2 {
-			return false, runtimeErrf(Pos{}, "integer expression expected")
+		a, ok := parseDecimalInt(left)
+		if !ok {
+			return false, testIntErr{arg: left}
+		}
+		b, ok := parseDecimalInt(right)
+		if !ok {
+			return false, testIntErr{arg: right}
 		}
 		switch op {
 		case "-eq":
@@ -129,5 +132,9 @@ func binaryTest(left, op, right string) (bool, error) {
 	}
 	return false, runtimeErrf(Pos{}, "%s: binary operator expected", op)
 }
+
+type testIntErr struct{ arg string }
+
+func (e testIntErr) Error() string { return e.arg + ": integer expected" }
 
 var _ = strings.TrimSpace

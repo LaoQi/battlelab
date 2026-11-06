@@ -164,3 +164,79 @@ command:
   cat <<"EOF"
   $X
   EOF
+
+--- name: T3h/021-heredoc-body-command-substitution
+# 未引用的 heredoc 体内 $( ) 必须展开（语料 7/1764 命中，此前硬报错）
+command:
+  cat <<EOF
+  cmd=[$(echo inner)]
+  nested=[$(echo $(echo deep))]
+  EOF
+
+--- name: T3h/022-heredoc-body-arithmetic
+command:
+  x=5
+  cat <<EOF
+  arith=[$((2+3))]
+  withvar=[$((x*2))]
+  EOF
+
+--- name: T3h/023-heredoc-body-backslash-escapes
+# 体内 \$ \\ \` 各去一层反斜杠，其余 \x 原样保留
+command:
+  cat <<EOF
+  a\$b \\c \`d e\f
+  EOF
+
+--- name: T3h/024-heredoc-body-line-continuation
+# 行尾反斜杠把两行接成一行
+command:
+  cat <<EOF
+  line1 \
+  line2
+  EOF
+
+--- name: T3h/025-heredoc-body-mixed-expansions
+command:
+  v=vv
+  cat <<EOF
+  v=$v b=${v:-d} c=[${#v}]
+  EOF
+
+--- name: T3h/026-heredoc-body-quotes-stay-literal
+# 体内单双引号不构成引用，按字面输出
+command:
+  cat <<EOF
+  he said "hi" and 'yo'
+  EOF
+
+--- name: T3h/027-heredoc-body-star-uses-ifs
+# 未引用体内 $* 按 IFS 首字符连接；$@ 恒按空格连接
+command:
+  IFS=,
+  set -- a b c
+  cat <<EOF
+  [$*]
+  EOF
+  cat <<EOF
+  [$@]
+  EOF
+
+--- name: T3h/028-heredoc-body-arith-and-cmdsub-in-one-line
+command:
+  cat <<EOF
+  line $((1+1)) and $(echo sub) and end
+  EOF
+
+--- name: T3h/029-heredoc-quoted-body-no-command-substitution
+# 引用终止符：体内一律不展开，$( ) 也保持字面
+command:
+  cat <<'EOF'
+  cmd=[$(echo inner)] arith=[$((2+3))]
+  EOF
+
+--- name: T3h/030-heredoc-body-expansion-then-pipe
+command:
+  cat <<EOF | tr a-z A-Z
+  got $((1+2)) from $(echo sub)
+  EOF

@@ -154,3 +154,131 @@ command:
 --- name: T3c/133-if-fd-redirect-stdin
 command:
   if cat 0</dev/null; then echo no-input; fi
+
+--- name: T3c/134-for-without-in-uses-positional
+command:
+  set -- a b
+  for x; do echo $x; done
+
+--- name: T3c/135-for-without-in-empty-positional
+command:
+  set --
+  for x; do echo $x; done
+  echo end
+
+--- name: T3c/136-for-without-in-in-function
+command:
+  f() { for a; do echo "a=$a"; done; }
+  f p q
+
+--- name: T3c/137-break-outside-loop-warns-and-continues
+command:
+  echo a; break; echo b
+
+--- name: T3c/138-continue-outside-loop-warns-and-continues
+command:
+  echo a; continue; echo b
+
+--- name: T3c/139-break-in-function-inside-loop
+# 函数内的 break 不算循环内：告警、返回 0、循环继续
+command:
+  f() { break; echo body; }
+  for i in 1 2; do f; echo "loop$i"; done
+
+--- name: T3c/140-exit-negative-wraps
+command:
+  exit -1
+
+--- name: T3c/141-exit-non-numeric-continues
+command:
+  exit abc; echo after
+
+--- name: T3c/142-return-negative
+command:
+  f() { return -1; }
+  f; echo "rc=$?"
+
+--- name: T3c/143-echo-c-suppresses-newline
+command:
+  echo -e "x\cy"; echo tail
+
+--- name: T3c/144-echo-octal-escape
+command:
+  echo -e "a\0101b"
+
+--- name: T3c/145-set-pipefail-pipeline
+command:
+  set -o pipefail
+  false | true
+  echo $?
+
+--- name: T3c/146-set-nounset-unbound
+command:
+  set -u
+  echo "$nope"
+  echo unreached
+
+--- name: T3c/147-set-nounset-default-still-works
+command:
+  set -u
+  echo "[${nope:-fallback}]"
+
+--- name: T3c/148-test-negative-integers
+command:
+  [ -2 -lt 0 ] && echo neg-lt
+  test -1 -eq -1 && echo neg-eq
+
+--- name: T3c/149-test-leading-zero-is-decimal
+command:
+  [ 010 -eq 10 ] && echo decimal
+
+--- name: T3c/150-substring-expansion
+command:
+  v=abcdef
+  echo "${v:1}" "${v:1:3}" "${v: -2}" "${v:2:-1}"
+
+--- name: T3c/151-case-conversion-expansion
+command:
+  v=aBc
+  echo "${v^^} ${v,,} ${v^} ${v,}"
+
+--- name: T3c/152-indirect-expansion
+command:
+  x=hi
+  v=x
+  echo "${!v}"
+
+--- name: T3c/153-arith-base-and-incr
+command:
+  echo $((2#101)) $((16#ff))
+  n=5
+  echo $((n++)) $n
+
+--- name: T3c/154-arith-power
+command:
+  echo $((2**10)) $((1+2**3))
+
+--- name: T3c/155-arith-nested-expansion
+command:
+  v=4
+  echo $(( ${v} + 1 )) $(( 1 + $(( 2 )) )) $(( $(echo 3) + 1 ))
+
+--- name: T3c/156-star-join-uses-ifs-first-char
+command:
+  IFS=,
+  set -- a b c
+  echo "[$*] [$@]"
+
+--- name: T3c/157-dollar-dollar-is-real-pid
+# $$ 为宿主 pid：非 0，且 kill -0 自己成功（不发信号，只做存在性探测）
+command:
+  echo $(( $$ > 0 )) ; kill -0 $$ && echo alive
+
+--- name: T3c/158-kill-signal-name-lookup
+# 内建 kill 的 -l 走内部信号表，不触碰任何进程
+command:
+  kill -l 9; kill -l KILL
+
+--- name: T3c/159-printf-percent-q
+command:
+  printf '%q %q\n' 'a b' 'ab'

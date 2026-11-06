@@ -126,6 +126,21 @@ func (x *expansion) applySegment(st *fieldState, seg Segment) error {
 			}
 			return nil
 		}
+		if seg.Inner == "*" && seg.Mode != ModeUnquoted {
+			st.put(x.env.JoinArgs(), true)
+			return nil
+		}
+		if seg.Inner == "*" {
+			st.putSplit(x.env.JoinArgs(), x.env.IFS())
+			return nil
+		}
+		if x.env.NounSet && seg.Kind == SegVar {
+			if _, set := x.env.Lookup(seg.Inner); !set {
+				if name, ok := expandUnboundName(seg); ok {
+					return x.runs.unboundAt(name, seg.Pos)
+				}
+			}
+		}
 		value, err := x.parameter(seg)
 		if err != nil {
 			return err
@@ -279,6 +294,9 @@ func (x *expansion) parseBraced(expr string) (bracedOp, error) {
 			return bracedOp{name: rest, op: "#len"}, nil
 		}
 	}
+	if strings.HasPrefix(expr, "!") && len(expr) > 1 && isBracedPlainName(expr[1:]) {
+		return bracedOp{name: expr[1:], op: "!"}, nil
+	}
 	if name, op, arg, ok := splitBracedSuffix(expr); ok {
 		return bracedOp{name: name, op: op, arg: arg}, nil
 	}
@@ -317,14 +335,16 @@ func splitBracedSuffix(expr string) (string, string, string, bool) {
 		return expr, "", "", true
 	}
 	rest := expr[start:]
-	for _, op := range []string{":-", ":=", ":?", ":+", "##", "%%", "//", "/#"} {
+	for _, op := range []string{":-", ":=", ":?", ":+", "##", "%%", "//", "/#", "^^", ",,"} {
 		if strings.HasPrefix(rest, op) {
 			return expr[:start], op, rest[len(op):], true
 		}
 	}
 	switch rest[0] {
-	case '-', '=', '?', '+', '#', '%', '/':
+	case '-', '=', '?', '+', '#', '%', '/', '^', ',':
 		return expr[:start], rest[:1], rest[1:], true
+	case ':':
+		return expr[:start], ":", rest[1:], true
 	}
 	return "", "", "", false
 }
@@ -362,6 +382,25 @@ func (x *expansion) braced(expr string, mode WordMode) (string, error) {
 		return value, nil
 	case "#len":
 		return itoa(len([]rune(value))), nil
+	case ":":
+		return x.substringOp(value, spec.arg)
+	case "^^":
+		return x.caseOp(value, spec.arg, true, false), nil
+	case ",,":
+		return x.caseOp(value, spec.arg, false, false), nil
+	case "^":
+		return x.caseOp(value, spec.arg, true, true), nil
+	case ",":
+		return x.caseOp(value, spec.arg, false, true), nil
+	case "!":
+		if !set {
+			return "", runtimeErrf(Pos{}, "%s: invalid indirect expansion", spec.name)
+		}
+		target, ok := x.env.Lookup(value)
+		if !ok {
+			return "", runtimeErrf(Pos{}, "%s: invalid indirect expansion", value)
+		}
+		return target, nil
 	case ":-":
 		if !set || value == "" {
 			return x.expandArbitrary(spec.arg)
@@ -572,12 +611,23 @@ func (x *expansion) expandToString(w Word) (string, error) {
 	var b strings.Builder
 	segs := x.applyTilde(w)
 	for _, seg := range segs {
+		if x.env.NounSet && seg.Kind == SegVar {
+			if _, set := x.env.Lookup(seg.Inner); !set {
+				if name, ok := expandUnboundName(seg); ok {
+					return "", x.runs.unboundAt(name, seg.Pos)
+				}
+			}
+		}
 		switch seg.Kind {
 		case SegLiteral:
 			b.WriteString(seg.Text)
 		case SegVar, SegBraced:
-			if seg.Inner == "@" || seg.Inner == "*" {
+			if seg.Inner == "@" {
 				b.WriteString(strings.Join(x.env.Args(), " "))
+				continue
+			}
+			if seg.Inner == "*" {
+				b.WriteString(x.env.JoinArgs())
 				continue
 			}
 			v, err := x.parameter(seg)

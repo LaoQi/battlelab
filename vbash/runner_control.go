@@ -47,9 +47,15 @@ func (r *Runner) runCompound(c *Compound, io *IO) (int, error) {
 }
 
 func (r *Runner) runFor(c *Compound, io *IO) (int, error) {
-	items, err := r.wordListToItems(c.Words, c)
-	if err != nil {
-		return 1, err
+	var items []string
+	if c.NoIn {
+		items = append(items, r.Env.Args()...)
+	} else {
+		expanded, err := r.wordListToItems(c.Words, c)
+		if err != nil {
+			return 1, err
+		}
+		items = expanded
 	}
 	return r.runLoopBody(c, items, io)
 }
@@ -74,6 +80,7 @@ func (r *Runner) wordListToItems(words []Word, c *Compound) ([]string, error) {
 }
 
 func (r *Runner) runLoopBody(c *Compound, items []string, io *IO) (int, error) {
+	defer r.enterLoop()()
 	status := 0
 	for _, item := range items {
 		r.Env.Set(c.Name, item, false)
@@ -102,6 +109,7 @@ func (r *Runner) runLoopBody(c *Compound, items []string, io *IO) (int, error) {
 }
 
 func (r *Runner) runWhile(c *Compound, io *IO) (int, error) {
+	defer r.enterLoop()()
 	status := 0
 	for {
 		code, err := r.inCondition(func() (int, error) { return r.runList(c.Cond, io) })

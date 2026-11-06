@@ -1,3 +1,112 @@
+## 2026-11-07 fix(vbash): 围栏真落地——登记全集/管理 `&` 子集/sid 判放行，作业表回归纯语义
+
+前一轮 review 定位的九项缺陷全部闭合（探针均有真 bash 对照），核心是把「作业表既当 `wait`/`$!`
+语义载体、又当围栏收割载体」的双重身份拆开：
+
+- **作业表（`wait`/`$!`）**：`reap` 改为只标记完成、不删条目，状态保留到被 `wait` 消费（修
+  `wait $pid` 对已完成作业 20/20 必现的 127）；复合 `&` 分支登记合成作业（无 pid），`wait` 无参
+  会等它（修 `( sleep 1 ) & wait` 0ms 返回）；`$!` 完成后保留最后 pid、从未起过作业时为空，
+  `set -u` 下报 unbound（报文对齐 bash 的 `$!:` 形态）
+- **围栏（`Fence`）**：改为按进程登记——只登记 `&` 分支起的进程（pid+starttime；前台命令不进围栏，
+  其生命周期归 `CancelCmd`/ctx，避免无人消费的登记开销）；`Reap()` 依 `/proc` 快照收集子孙、按 `sid != 主 sid` 放行整棵逃逸
+  会话树（**该判据此前只写在文档里，代码从未实现**——旧实现对登记作业无条件 `kill(-pid)`，
+  非 fork 型 setsid daemon 照杀）、按进程组去重收割；根已退出也照杀其进程组（覆盖
+  `sh -c 'x &'` 的同组孤儿）；starttime 防 pid 复用。旧实现的 `kill(-pid)` 一刀切与围栏作业表
+  泄漏（50 轮 50 表）随之消除
+- **`&` 位路由**：内建与已定义函数回落到虚拟子 shell 分支执行（修 `export X=1 &`/`f &` 报
+  `command not found`）；异步路径的外部命令解析与前台共用 `resolveExternal`（删除重复的
+  `lookupAsync`）
+- **后台 `<` 重定向**：仅当 fd0 未重定向时才接 `/dev/null`（修 `cat < f &` 丢输入）
+- **平台片重排**：`/proc` 读取移入 linux 片；`getsid` 判定走 POSIX `RawSyscall`（linux/darwin
+  共享）；darwin 无 `/proc` 退化为根级判放行 + 杀根进程组（漏收方向，见 capability §4.1）
+- **tools 接线**：`tools.Options.Fence` → `tools/shell.Config.Fence` → `vbash.Config.Fence`
+  透传打通（此前围栏在真实路径上是死代码）；调用方职责（启动 `EnableSubreaper`、退出 `Reap`）
+  写进文档
+
+基准新增 `T1/050`–`056`（wait 时序/已完成作业状态/后台 `<`/无作业 `$!`/nounset `$!`/内建函数
+`&`/`$!` 保留），`make vbash-check` 282/282；单测新增围栏覆盖复合 `&`、死根孤儿、wait 语义、
+`$!` 三态、内建函数 `&` 共 8 条（`vbash/jobs_test.go`）与 tools 接线 1 条。
+
+## 2026-11-07 feat(vbash): 后台 `&` 真异步 + 进程围栏（跨轮存活、退出收割、主动 setsid 放行）
+
+原实现把 `&` 当**同步**处理（`sleep 2 & echo done` 等 2 秒），导致三条硬伤：后台进程活不过单轮
+（`RunScript` 返回前被 `CancelCmd` 杀掉）、`set -e` 下 `false &` 吞掉后续全部命令、`$!` 恒空使
+`kill $!` 变硬错。语料口径：tanya 1762 + ivan 3054 条历史 `run_shell`，命令位 `&` 占 1.0%，按 AST
+递归（含 `()`/`{}`/循环/函数体）占 2.38% / 1.08%，`( cmd & )` 形态 24 / 8 处。
+
+**真异步**
+
+| 用例 | 修复前 | 修复后 | bash |
+|---|---|---|---|
+| `sleep 2 & echo done` | 2009ms | ~1ms | ~5ms |
+| `sleep 1 & sleep 1 & sleep 1 & wait` | 3018ms | 1006ms | 1006ms |
+| `set -e; false & echo after; echo end` | 无输出 rc=1 | `after`/`end` rc=0 | 同 |
+| `echo $!` / `wait $!` | 空 / 空操作 | pid / 作业状态 | 同 |
+
+命令位单命令直接 `Start()` 真进程；`( cmd & )`、管道内、循环内、函数内由 goroutine 跑隔离 env
+（bash 是子 shell，`x=1 & echo $x` 有时序偶然性；库内并发必须隔离，属有意偏差，已入 `capability`）。
+后台命令 stdin 接 `/dev/null`，赋值前缀与 `cd` 不回流父 shell。**作业控制不做**（`jobs`/`kill %N`/`fg`/`bg`/`disown`：
+语料零使用，且需终端所有权），`jobs` 回到 `command not found`(127) 的既有口径。
+
+**进程围栏**
+
+目标改为"后台进程只跟随调用方主进程生命周期、退出时保底拦截防污染"，**不是**作业控制：
+
+- `vbash.EnableSubreaper()`：POSIX `PR_SET_CHILD_SUBREAPER`，零权限，让孤儿重新挂到主进程下
+- `vbash.NewFence()` + `Config.Fence`：登记本次运行起的作业表
+- `Fence.Reap()`：主进程退出路径调用，按进程组 `SIGKILL` + 宽限 + `Wait4(WNOHANG)` 清僵尸
+- **单轮 `RunScript` 结束不收割**（跨轮存活是需求）；主动 `setsid`/double-fork 视为有意逃逸，一律放行
+- `vbash.NewSyncWriter(w)`：后台与前台并发写同一 writer 时串行化（Out/Err 各包一层互不干扰）
+
+**验证**：`go test ./...` 与 `-race` 全绿；新单测 `vbash/jobs_test.go`（10 条，含跨轮存活、
+围栏收割、setsid 放行、并发写）；基准新增 `T1/043`–`049`（golden 由真 bash 录制），
+`make vbash-check` 275/275 全通过。文档：`capability` §4.1 进程围栏（含已知边界）、
+`plan` §3.4、`open-issues` §3。
+
+## 2026-11-06 fix(vbash): 修掉调用方真实试用暴露的 13 类缺陷（P0 9 项、P1/P2 4 项）
+
+调用方（tanya 开启 vbash 后）做了一轮真 bash ↔ vbash 差分实测（约 180 条用例），暴露一批
+**文档未记录**的缺陷。本轮全部修完，语料口径为 1764 条历史 `run_shell` 调用。
+
+**P0（会硬报错、静默错或误伤宿主）**
+
+| # | 缺陷 | 修复前 → 修复后 |
+|---|---|---|
+| 1 | heredoc 体内 `$( )` / `$(( ))` | 退出码 1 / 静默空 → 正常展开（含嵌套） |
+| 2 | heredoc 体内反斜杠与续行 | `\$`/`\\`/`` \` `` 全错、续行不拼接 → 与 bash 一致 |
+| 3 | `test`/`[` 不认负数、`010` 当八进制 | 报 `integer expression expected` → 负数/`+3` 可用，`010`=10（`0x10` 报错，与 bash 同） |
+| 4 | `exit -1` 返回 0、`exit abc` 静默 | → 255 / 诊断 + 继续执行（`exit 1 2` 终止） |
+| 5 | 循环外 `break`/`continue` | **吞掉后续命令** → 告警 + 继续；函数内的 `break` 不算循环内 |
+| 6 | `for x; do`（省略 `in`） | 空迭代 → 遍历位置参数 |
+| 7 | `echo -e` 的 `\c` 与 `\0NNN` | 不抑制换行、不解释八进制 → 均与 bash 一致（另补 `\xHH`/`\uHHHH`/`\UHHHHHHHH`） |
+| 8 | 算术内嵌 `${…}` / `$( )` / `$(( ))` | 硬报错 / 静默 0 → 正常求值 |
+| 9 | `$$` 恒 0（`kill $$` 杀穿宿主进程组） | → `$$` = 宿主 pid；新增内建 `kill` 安全阀：`pid<=0` 与宿主自身 pid 一律拒绝，`-0` 探测自身放行 |
+
+**P1/P2（静默错或不一致）**
+
+| # | 缺陷 | 修复后 |
+|---|---|---|
+| 10 | `$*` 双引号内不按 IFS 首字符 | `Env.JoinArgs()` 统一三处 |
+| 11 | `set -o pipefail` / `set -u` 被忽略 | pipefail 取首个非零段；nounset 诊断 + 退出码 127；`set` 解析重写（选项簇、`-o`/`+o`、不再吞位置参数） |
+| 12 | `${V:off:len}`、`${V^^}`、`${!V}`、`base#`、`n++`、`**` | 全部实现；后置 `n++` 要求在 `parseAssign` 之前识别（否则名字被当赋值吃掉） |
+| 13 | `printf %q` 用单引号包裹 | 改为逐字符反斜杠转义，43 个字符与 bash 零差异 |
+
+**结构变化**
+
+- 新增 `vbash/numparse.go`（三种整数口径：算术/`test`/`exit`）、`arith_dollar.go`、`arith_extra.go`、
+  `expand_extra.go`、`nounset.go`、`loopctl.go`、`kill.go`、`shellquote.go`
+- `lexer.go` 新增 `lexHeredocSegments`：heredoc 正文走与双引号相同的词法路径，替换原手写 `$` 扫描
+- `platformOps` 新增 `DeliverSignal`（posix 側 `syscall.Kill`，其余 stub）
+- `toolDesc` 去掉已修项（`${V:off:len}`/`n++`/`**`/`pipefail`），保留仍不支持项
+- 顺手清理 `tools/shell/vbash.go` 的 `classifyVbashError` 未使用形参
+
+**验证**
+
+- 基准 228 → **268**（`T3h/021`–`030`、`T3c/134`–`159`、`T2/054`–`057`），golden 由真 bash 录制，七层 100%
+- 单测新增 `vbash/fixes_test.go` 共 37 条
+- `go build ./... && go vet ./... && go test ./... && go test -race ./... && make cross && make vbash-check` 全绿
+- 文档：`vbash-capability.md` §3.1/§3.3/§4/§5 与 `vbash-open-issues.md` §6 全面更新；新增 §3.3.1 记录不复刻的 bash 怪癖
+
 ## 2026-11-06 feat(tools): vbash 工具描述列出不支持的构造与替代写法
 
 `run_shell` 启用 vbash 后，描述里原本只有一句「实验特性，不支持的构造直接报错」，
