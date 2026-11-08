@@ -51,7 +51,10 @@ type profile struct {
 	Name      string
 	Kind      Kind
 	ExtraArgs []string
+	Builtin   bool
 }
+
+const BuiltinShellName = "vbash"
 
 func (p *profile) arg() string {
 	switch p.Kind {
@@ -65,6 +68,9 @@ func (p *profile) arg() string {
 }
 
 func resolveProfile(override string, lookPath func(string) (string, error)) (*profile, error) {
+	if isBuiltinShell(override) {
+		return builtinProfile(), nil
+	}
 	if override != "" {
 		p, err := lookPath(override)
 		if err != nil {
@@ -73,6 +79,18 @@ func resolveProfile(override string, lookPath func(string) (string, error)) (*pr
 		return newProfile(p), nil
 	}
 	return firstAvailable(platform.Candidates, lookPath)
+}
+
+// IsBuiltin 判断 shell 配置值是否指向进程内解释器（而非磁盘上的 shell 程序）。
+// 调用方用它决定是否启用解释器专属的原语（如进程围栏的 subreaper 接线）。
+func IsBuiltin(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), BuiltinShellName)
+}
+
+func isBuiltinShell(name string) bool { return IsBuiltin(name) }
+
+func builtinProfile() *profile {
+	return &profile{Name: BuiltinShellName, Kind: KindPosix, Builtin: true}
 }
 
 // Invocation 是一次性旁路执行（终端通知等）复用的 shell 入口：Argv 为解释器路径 + 固定参数，Kind 决定引号规则。
@@ -88,11 +106,26 @@ func Resolve(override string) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	if p.Builtin {
+		return Invocation{Argv: platformFallbackArgv(), Name: p.Name, Kind: p.Kind}, nil
+	}
 	argv := make([]string, 0, len(p.ExtraArgs)+2)
 	argv = append(argv, p.Path)
 	argv = append(argv, p.ExtraArgs...)
 	argv = append(argv, p.arg())
 	return Invocation{Argv: argv, Name: p.Name, Kind: p.Kind}, nil
+}
+
+func platformFallbackArgv() []string {
+	p, err := firstAvailable(platform.Candidates, exec.LookPath)
+	if err != nil || p == nil {
+		return nil
+	}
+	argv := make([]string, 0, len(p.ExtraArgs)+2)
+	argv = append(argv, p.Path)
+	argv = append(argv, p.ExtraArgs...)
+	argv = append(argv, p.arg())
+	return argv
 }
 
 func firstAvailable(candidates []string, lookPath func(string) (string, error)) (*profile, error) {

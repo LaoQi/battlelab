@@ -76,17 +76,17 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 }
 
 func vbashArg0(p *profile) string {
-	if p.Kind == KindPosix {
+	if p.Kind == KindPosix && !p.Builtin {
 		return filepath.Base(p.Path)
 	}
 	return "bash"
 }
 
 func vbashShellName(p *profile) string {
-	if p.Kind == KindPosix {
+	if p.Kind == KindPosix && !p.Builtin {
 		return p.Path
 	}
-	return "bash"
+	return BuiltinShellName
 }
 
 func (t *Tool) classifyVbashError(res *Result, err error) {

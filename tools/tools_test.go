@@ -133,11 +133,11 @@ func TestStandardVbashReachesShellTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := Standard(Options{
-		Home:      home,
-		Workspace: func() string { return cwd },
-		LookPath:  exec.LookPath,
-		Vbash:     true,
-		Environ:   os.Environ,
+		Home:          home,
+		Workspace:     func() string { return cwd },
+		LookPath:      exec.LookPath,
+		ShellOverride: shell.BuiltinShellName,
+		Environ:       os.Environ,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +161,8 @@ func TestStandardVbashReachesShellTool(t *testing.T) {
 }
 
 func TestStandardVbashRequiresEnviron(t *testing.T) {
-	if _, err := Shell(Options{LookPath: stubLookPath, Vbash: true}); err == nil {
-		t.Fatal("经 Options 开启 Vbash 但缺 Environ 时应装配期报错")
+	if _, err := Shell(Options{LookPath: stubLookPath, ShellOverride: shell.BuiltinShellName}); err == nil {
+		t.Fatal("shell 配置为 vbash 但缺 Environ 时应装配期报错")
 	}
 }
 

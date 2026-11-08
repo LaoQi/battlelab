@@ -15,7 +15,6 @@ type Options struct {
 	Console       shell.Console
 	LookPath      func(string) (string, error)
 	Programs      []string
-	Vbash         bool
 	Environ       func() []string
 	Fence         *vbash.Fence
 	ImageMaxBytes int
@@ -31,7 +30,6 @@ func Shell(o Options) (*shell.Tool, error) {
 		Workspace: o.Workspace,
 		Console:   o.Console,
 		Programs:  o.Programs,
-		Vbash:     o.Vbash,
 		Environ:   o.Environ,
 		Fence:     o.Fence,
 	})

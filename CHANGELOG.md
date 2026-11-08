@@ -1,3 +1,34 @@
+## 2026-11-09 refactor(tools)!: vbash 并入 shell 配置项，取消独立布尔开关
+
+**破坏性变更**：`tools/shell.Config.Vbash` 与 `tools.Options.Vbash` 删除。内置解释器不再是
+一条独立开关，而是 `shell` 配置项的一个取值（与 `bash`/`zsh`/`pwsh` 同级）：写
+`Override: "vbash"`（tanya 配置为 `shell: vbash`）即启用，写成 `bash` 就走系统 shell。
+
+- **解析**：`profile` 增加 `Builtin` 字段；`resolveProfile` 先判 `IsBuiltin`，命中即返回
+  `builtinProfile()`（`Name: "vbash"`、`Kind: KindPosix`、**不查 `PATH`**、`Path` 为空）。
+  大小写与首尾空白不敏感（`VBASH`、` Vbash ` 同样生效）。
+- **API**：新增 `shell.BuiltinShellName`（`"vbash"`）与 `shell.IsBuiltin(name)`，后者供调用方
+  判断某配置值是否指向内置解释器（tanya 用它决定是否接线进程围栏）。`isBuiltinShell` 保留为
+  内部别名。
+- **装配**：`tool.go` 的运行分支与描述分支全部改看 `profile.Builtin`；`Environ` 仅在
+  Builtin 时为必填（`MsgVbashEnvironFmt` 文案改为「shell 配置为 vbash 时须同时注入 Environ」）。
+- **旁路执行**：`Resolve("vbash")` 用于通知命令等一次性旁路，需要真实 argv——`Name` 报 `vbash`、
+  `Argv` 回落到平台首个可用 shell（新增 `platformFallbackArgv`），避免内置解释器给出空 argv。
+- **诊断前缀**：`vbashShellName` 对内置 profile 返回 `vbash`（原实现取 `profile.Path`，现该字段为空），
+  `vbashArg0` 回落 `bash`。
+- **描述**：`describeVbash` 不再恒带「盘符写作 /c/」提示，仅 `GOOS == windows` 时给出（该提示
+  原先靠「宿主非 POSIX」间接判断，现在与宿主无关）。
+
+测试：`vbash_test.go` 的 4 处配置改走 `Override: BuiltinShellName`；新增
+`TestVbashViaShellConfigValue`（同级取值、`Path` 为空）、`TestVbashShellNameCaseInsensitive`、
+`TestRegularShellStaysNonBuiltin`（`bash`/`sh`/`zsh` 不被误判）、
+`TestResolveBuiltinFallsBackToHostShell`；`TestVbashConfigAcceptsNonPosixShell` 改名
+`TestVbashIgnoresHostShell`（断言改为「不依赖宿主 shell」，去掉过时的 `/c/` 断言）。
+`tools_test.go` 三条转发用例改走 `ShellOverride`。
+
+验收：`gofmt -l` 干净、`go build`/`vet ./...`、`go test ./...` 全绿、`make cross` 通过、
+基准 290/290。文档 `docs/shell-tool.md` §17 与 `docs/vbash-capability.md` §2 已改写开关口径。
+
 ## 2026-11-09 fix(vbash): 赋值前缀吞副作用、nounset 漏 `${}`、EPIPE 误诊断；tanya 接线围栏并默认 vbash
 
 调用方（tanya）试用前的阻塞项修复，三处均为**静默错误**（不报错、返回错误结果），危害高于报错类缺口：

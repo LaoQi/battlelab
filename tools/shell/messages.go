@@ -21,5 +21,5 @@ const (
 	MsgTruncMiddle         = "[%s 中间截断 %d 字节]"
 	MsgTruncTail           = "[%s 截断 %d 字节]"
 	MsgVbashDesc           = "命令由内置 bash 解释器执行（实验特性，不支持的构造直接报错、不回落系统 shell）：不支持 case/[[ ]]/反引号/<<</(( ))/进程替换/数组/函数内改全局变量/select/time/coproc，遇到请改用 if/elif、[ ]、$( )、heredoc、$(( ))。"
-	MsgVbashEnvironFmt     = "启用内置 bash 解释器（vbash）需同时注入 Environ，否则外部命令拿不到环境变量"
+	MsgVbashEnvironFmt     = "shell 配置为 vbash（内置 bash 解释器）时须同时注入 Environ，否则外部命令拿不到环境变量"
 )

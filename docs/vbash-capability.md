@@ -20,24 +20,27 @@
 
 ## 2 现在怎么用
 
-默认关闭。开关在 `tools/shell` 的配置上：
+开关就是 `shell` 配置项本身，`vbash` 与 `bash`/`zsh`/`pwsh` 同级（没有独立的布尔开关）：
 
 ```go
 tool, err := shell.New(shell.Config{
+	Override:  "vbash",       // 与 "bash"/"zsh" 同级的取值；空则按平台自动探测
 	LookPath:  exec.LookPath,
 	Home:      home,
 	Workspace: func() string { return cwd },
 	Console:   console,
-	Vbash:     true,          // 启用内置解释器（实验特性）
 	Environ:   os.Environ,    // 必填：解释器不读 os.Environ
 })
 ```
 
 | 约束 | 行为 |
 |---|---|
-| `Vbash: false`（默认） | 与历史完全一致：`bash -c "$command"` |
-| `Vbash: true` + `Environ` 缺失 | `New` 期报错，不起解释器 |
-| shell 解析为 pwsh / cmd | 允许：命令仍按 bash 语法书写（这正是 Windows 上的目标场景）；诊断前缀取 `bash` |
+| `Override` 为空 | 按平台探测真实 shell（`bash -c "$command"`），与历史一致 |
+| `Override: "bash"` 等 | 仍起真实 shell 子进程；要让命令走系统 shell 就显式这么写 |
+| `Override: "vbash"` + `Environ` 缺失 | `New` 期报错，不起解释器 |
+| `Override: "vbash"` | 进程内解释器，**不查 `PATH`**、不要求磁盘上存在该文件 |
+| 判断入口 | `shell.IsBuiltin(name)`：供调用方判断某取值是否指向内置解释器（大小写/首尾空白不敏感） |
+| 宿主为 pwsh / cmd | 与宿主无关：写 `vbash` 即生效，命令仍按 bash 语法书写（Windows 上的目标场景） |
 | `interactive: true` | **不经解释器**，仍借终端直跑（终端所有权属 `ctty`） |
 
 ## 3 能力矩阵

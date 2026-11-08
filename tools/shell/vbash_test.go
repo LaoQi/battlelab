@@ -25,7 +25,7 @@ func testVbashTool(t *testing.T, mutate ...func(*Config)) *Tool {
 	cfg := Config{
 		Home:      home,
 		Workspace: func() string { return cwd },
-		Vbash:     true,
+		Override:  BuiltinShellName,
 		Environ:   os.Environ,
 	}
 	for _, f := range mutate {
@@ -197,25 +197,25 @@ func TestVbashInteractiveBypasses(t *testing.T) {
 	}
 }
 
-func TestVbashConfigAcceptsNonPosixShell(t *testing.T) {
-	tool, err := New(Config{Override: "pwsh", LookPath: lookPathStub("pwsh"), Vbash: true, Environ: os.Environ, Programs: []string{}})
+func TestVbashIgnoresHostShell(t *testing.T) {
+	tool, err := New(Config{LookPath: lookPathStub("pwsh"), Override: BuiltinShellName, Environ: os.Environ, Programs: []string{}})
 	if err != nil {
-		t.Fatalf("非 POSIX shell 上启用 vbash 应被接受（跨平台归一是本特性目标）: %v", err)
+		t.Fatalf("shell: vbash 不应依赖宿主 shell 是否存在（跨平台归一是本特性目标）: %v", err)
+	}
+	if !tool.profile.Builtin {
+		t.Error("shell: vbash 应解析为内置解释器 profile")
 	}
 	desc := tool.toolDesc()
 	if !strings.Contains(desc, "内置 bash 解释器") {
 		t.Errorf("描述应说明由内置解释器执行: %q", desc)
 	}
 	if strings.Contains(desc, "PowerShell 语法") {
-		t.Errorf("启用 vbash 后描述不应再声称 PowerShell 语法: %q", desc)
-	}
-	if !strings.Contains(desc, "盘符写作 /c/ 形式") {
-		t.Errorf("非 POSIX 宿主上描述应给出路径写法提示: %q", desc)
+		t.Errorf("内置解释器模式下描述不应再声称 PowerShell 语法: %q", desc)
 	}
 }
 
 func TestVbashConfigRequiresEnviron(t *testing.T) {
-	if _, err := New(Config{LookPath: lookPathStub("bash"), Vbash: true}); err == nil {
+	if _, err := New(Config{LookPath: lookPathStub("bash"), Override: BuiltinShellName}); err == nil {
 		t.Fatal("启用 vbash 应要求注入 Environ")
 	}
 }
@@ -251,5 +251,59 @@ func TestVbashFenceWiring(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if got := fence.Reap(); got != 1 {
 		t.Fatalf("经 Tool 起的后台作业应进围栏，Reap 清理 %d 个", got)
+	}
+}
+
+func TestVbashViaShellConfigValue(t *testing.T) {
+	cfg := Config{LookPath: lookPathStub("bash"), Override: "vbash", Environ: os.Environ, Programs: []string{}}
+	tool, err := New(cfg)
+	if err != nil {
+		t.Fatalf("shell: vbash 应与 bash/pwsh 同级被接受: %v", err)
+	}
+	if !tool.profile.Builtin {
+		t.Fatal("shell: vbash 应解析为内置解释器")
+	}
+	if tool.profile.Name != BuiltinShellName {
+		t.Errorf("Name 应为 %q，实际 %q", BuiltinShellName, tool.profile.Name)
+	}
+	if tool.profile.Path != "" {
+		t.Errorf("内置解释器不应有磁盘路径，实际 %q", tool.profile.Path)
+	}
+}
+
+func TestVbashShellNameCaseInsensitive(t *testing.T) {
+	for _, v := range []string{"vbash", "VBASH", " Vbash "} {
+		tool, err := New(Config{LookPath: lookPathStub("bash"), Override: v, Environ: os.Environ, Programs: []string{}})
+		if err != nil {
+			t.Fatalf("%q 应解析为内置解释器: %v", v, err)
+		}
+		if !tool.profile.Builtin {
+			t.Errorf("%q 应解析为内置解释器", v)
+		}
+	}
+}
+
+func TestRegularShellStaysNonBuiltin(t *testing.T) {
+	for _, v := range []string{"bash", "sh", "zsh"} {
+		tool, err := New(Config{LookPath: lookPathStub(v), Override: v, Programs: []string{}})
+		if err != nil {
+			t.Fatalf("%q 应正常解析: %v", v, err)
+		}
+		if tool.profile.Builtin {
+			t.Errorf("%q 不应被当作内置解释器", v)
+		}
+	}
+}
+
+func TestResolveBuiltinFallsBackToHostShell(t *testing.T) {
+	inv, err := Resolve(BuiltinShellName)
+	if err != nil {
+		t.Fatalf("Resolve(%q) 失败: %v", BuiltinShellName, err)
+	}
+	if inv.Name != BuiltinShellName {
+		t.Errorf("Name 应为 %q，实际 %q", BuiltinShellName, inv.Name)
+	}
+	if len(inv.Argv) == 0 {
+		t.Error("旁路执行（通知命令）需要真实 argv，内置解释器应回落到宿主 shell")
 	}
 }
