@@ -2,10 +2,12 @@ package vbash
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type IO struct {
@@ -140,7 +142,20 @@ func (x *IO) WriteString(w io.Writer, s string) error {
 		return nil
 	}
 	_, err := io.WriteString(w, s)
+	if err != nil && isBrokenPipe(err) {
+		return nil
+	}
 	return err
+}
+
+func isBrokenPipe(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	return strings.Contains(err.Error(), "broken pipe")
 }
 
 type nopReader struct{}

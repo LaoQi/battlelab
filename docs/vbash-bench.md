@@ -68,7 +68,7 @@ files: {}
 cd testdata/vbash-bench
 
 ./run.py --record                       # 用真 bash 重新生成 golden
-./run.py --target /bin/bash             # 自检：应 268/268
+./run.py --target /bin/bash             # 自检：应 290/290
 ./run.py --target ../../vbash           # 测被测实现
 ./run.py --target ./mybash --filter T3  # 只跑 heredoc/控制流
 ./run.py --target ./mybash --verbose    # 打印失败详情与 diff
@@ -101,7 +101,7 @@ cd testdata/vbash-bench
 
 | 被测 | 结果 |
 |---|---|
-| 真 bash 5.3 | **268/268（100%）** |
+| 真 bash 5.3 | **290/290（100%）** |
 | `reference-naive.py` | 见 run.py `--target ./tools/reference-naive.py` 实跑 |
 
 分层建议门槛（对应 `vbash.md` §7 的实施顺序）：

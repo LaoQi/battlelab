@@ -11,7 +11,7 @@
 
 > **验证状态（2026-11-05）**：三平台分片（`vbash/platform_{linux,darwin,windows}.go`）已实现，
 > Windows 侧含盘符归一、`;` 分隔 `PATH`、`PATHEXT` 查找、大小写不敏感匹配与退出码映射。
-> 但**只在 Linux 上跑过基准**（268/268）；darwin/windows 目前仅由 `make cross` 保证编译与 vet 通过。
+> 但**只在 Linux 上跑过基准**（290/290）；darwin/windows 目前仅由 `make cross` 保证编译与 vet 通过。
 > 跨平台一致性属「实现完成、待验证」，不要当作已验证结论引用。
 
 一阶段只虚拟解释器本身，**外部程序一律透传**（`cat`/`grep`/`sed`/`git`/`go`… 跑的是用户系统上那个），
@@ -52,7 +52,7 @@ tool, err := shell.New(shell.Config{
 | **函数** | `name() { …; }` 定义与调用、位置参数、`$#`、`shift`、`return N`、递归、`local`（仅函数内） |
 | **分组** | `( … )` 子 shell（`cd`/变量不回传）、`{ …; }` 花括号分组（共享环境） |
 | **循环控制** | `break`/`continue`，支持 `break 2` 深度 |
-| **`set` 选项** | `set -e`（含 bash 的三条例外）、`set -u`（未绑定变量：诊断 + 退出码 127）、`set -o pipefail`（管道取首个非零段）、`set -x` 被接受（不打印）、`set --` 位置参数；支持选项簇 `-euo pipefail` 与 `-o`/`+o` 无参打印 |
+| **`set` 选项** | `set -e`（含 bash 的三条例外）、`set -u`（未绑定变量：`$VAR` 与 `${VAR}`、`${#V}`、`${V^^}`、`${V:off}`、`${V#p}`、`${V/p/r}` 同样触发；带默认值的 `:-`/`-`/`:=`/`=`/`:+`/`+`/`?`/`:?` 不受影响；诊断 + 退出码 127）、`set -o pipefail`（管道取首个非零段）、`set -x` 被接受（不打印）、`set --` 位置参数；支持选项簇 `-euo pipefail` 与 `-o`/`+o` 无参打印 |
 | **重定向** | `>` `>>` `<` `2>` `2>>` `2>&1` `>&2` `&>` `&>>` `>\|` `<>` `<&`、`n<&m` 复制、`<&-`/`>&-` 关闭、`/dev/null` 内部映射；**严格保序**（`2>&1 >f` ≠ `>f 2>&1`）；redirs 可挂在分组/复合命令/函数上 |
 | **heredoc** | `<<EOF`、`<<-EOF`（剥前导 tab）、`<<'EOF'`（禁展开）、多 heredoc 队列、未闭合按 EOF 截断并告警；**未引用体内**支持 `$VAR` `${…}` `$( )`（含嵌套）`$(( ))`、`$*`（按 IFS 首字符）`$@`、`\$ \\ \`` 去一层反斜杠、行尾 `\` 续行 |
 | **参数展开** | `$VAR`、`${VAR}`、`${#VAR}`（字符数）、`${V:off}` `${V:off:len}`（负偏移/负长度）、`${V^^}` `${V,,}` `${V^}` `${V,}`（可带 `[pat]` 限定）、`${!V}`（间接展开）、`${V:-x}` `${V-x}` `${V:=x}` `${V= x}` `${V:?x}` `${V?x}` `${V:+x}` `${V+x}`、`${V##p}` `${V#p}` `${V%%p}` `${V%p}`、`${V/p/r}` `${V//p/r}` `${V/#p/r}`；模式里可用 `*?[...]` |
@@ -66,7 +66,7 @@ tool, err := shell.New(shell.Config{
 | **内建命令** | `: true false echo printf cd pwd export unset set shift exit return read wait local break continue test [ kill`（共 22 个，含 `[`） |
 | **`exec`** | `exec >f 2>&1`（无命令，**重定向持久生效**到脚本结束）、`exec <cmd> [args]`（执行该命令后不再继续，退出码取该命令）、裸 `exec` 无副作用；`-c`/`-l`/`-a name` 前缀被接受但语义简化 |
 | **`test`/`[`** | 一元 `-z -n -e -a -f -d -s -r -w -x -L -h`、二元 `= == != < > -eq -ne -lt -le -gt -ge`、`!` 取反；整数比较接受前导 `+`/`-`，**按十进制**解释（`010`=10，`0x10` 报错），非数值诊断 `[: abc: integer expected` |
-| **`printf`** | `%s %c %b %q %d %i %u %o %x %X %f %F %e %E %g %G`、宽度/左对齐/零填充/`+`/` `(空格)/`#`、精度（字符串截断、整数补零、浮点小数位）、格式复用、`\n \t \r \\ \" \a \b \f \v \e \0NNN \xHH`；无效数字按 bash 打诊断并置退出码 1 |
+| **`printf`** | `%s %c %b %q %d %i %u %o %x %X %f %F %e %E %g %G`、宽度/左对齐/零填充/`+`/` `(空格)/`#`、精度（字符串截断、整数补零、浮点小数位）、格式复用、`-v var`（写变量而非输出，坏标识符按 bash 报 `not a valid identifier`）、`\n \t \r \\ \" \a \b \f \v \e \0NNN \xHH`；无效数字按 bash 打诊断并置退出码 1 |
 | **`echo`** | `-n`、`-e`/`-E`；`-e` 下 `\c` 立即截断并抑制换行，支持 `\0NNN` 八进制、`\xHH`、`\uHHHH`、`\UHHHHHHHH` |
 | **`cd`** | `cd`（回家）、`cd -`（并打印目标）、`-L`/`-P`、维护 `PWD`/`OLDPWD` |
 | **`read`** | `-r`、多变量切分（末变量吃剩余）、缺省 `REPLY`、EOF 返回 1、`while read` 惯用法 |
@@ -99,7 +99,6 @@ tool, err := shell.New(shell.Config{
 | 函数内对全局变量赋值 | 不回传（函数环境是克隆的）：`x=1; f(){ x=2; }; f` → `1` | 回传 → `2` |
 | 函数内 `$0` | 函数名 | shell 名 |
 | `set -x` | 被接受但不打印追踪 | 打印 `+ cmd` |
-| `IFS=: read a b`（赋值前缀作用在 `read`） | 前缀变量不回写、也不影响本次切分 | 影响本次切分 |
 | `${V:?msg}` 失败 | 退出码 1、无 stderr | 退出码 127、stderr 打 `V: msg` |
 | `[ … ]` 的 `( … )` 分组、`-a`/`-o` 逻辑连接 | 报错（`binary operator expected` / `too many arguments`） | 支持 |
 | `[ f1 -nt f2 ]` 等文件比较 | 报错 | 支持 |
@@ -184,7 +183,8 @@ shell 函数调用深度上限 `maxFuncDepth = 512`，超限打
 - **退出码**：`exit 300` → 44、`exit -1` → 255、`exit -300` → 212（统一按 `& 0xff` 取模，与 bash 一致）；
   外部命令被信号杀 → `128+signum`。参数语义同 bash：`exit abc` 打 `numeric argument required` 并**继续执行**
   （状态 2），`exit 1 2` 打 `too many arguments` 并**终止**（状态 1）。
-- **`set -u`**：未绑定变量打 `<shell>: line N: NAME: unbound variable` 并以 127 退出；
+- **`set -u`**：未绑定变量打 `<shell>: line N: NAME: unbound variable` 并以 127 退出
+  （`$VAR` 与 `${VAR}` 一致；特殊参数名按 bash 口径，`$!` 报 `$!`、`${!}` 报 `!`、`$9` 报 `$9`、`${9}` 报 `9`）；
   `${NAME:-x}`/`${NAME-x}` 等带默认值的形态不受影响。
 - **`kill` 内建安全阀**：`$$` 取宿主进程 pid（非 0），但 `kill` 对 `pid <= 0`（含 `kill 0` 进程组、
   `kill -1` 全体）与宿主自身 pid **一律拒绝**（`Operation not permitted`，退出码 1），
@@ -209,7 +209,7 @@ shell 函数调用深度上限 `maxFuncDepth = 512`，超限打
 | 放行判据 | 后台根的 `sid != 主进程 sid` → 整棵会话树放行（**主动 `setsid`/double-fork 视为有意逃逸，一律放行**，设计决策）；linux 上另以 starttime 防 pid 复用 |
 | 收割方式 | 以登记的后台项为根：进程表收集子孙 → 过滤 `sid == 主 sid` → 按进程组去重后 `kill(-pgid, SIGKILL)`；根已退出的也照杀其进程组（覆盖 `sh -c 'x &'` 留下的同组孤儿）；宽限 2s 后清僵尸 |
 | 僵尸回收 | subreaper 收来的子进程必须 `Wait4(-1, WNOHANG)` 循环回收，否则永久 `state=Z` |
-| 接线 | 调用方构造 `Fence` 后经 `tools.Options.Fence`（或 `vbash.Config.Fence`）传入；`EnableSubreaper` 与退出路径的 `Reap` 由调用方主进程负责 |
+| 接线 | 调用方构造 `Fence` 后经 `tools.Options.Fence`（或 `vbash.Config.Fence`）传入；`EnableSubreaper` 与退出路径的 `Reap` 由调用方主进程负责。**退出路径必须覆盖「函数返回」而非只有 `os.Exit` 分支**——tanya 首轮接线只挂在 `exitNow` 上，`ask`/REPL 正常结束走的是 `main` 直接 `return`，`Reap` 从未执行（实测 `sleep 240 &` 端口残留），改为构造 `Fence` 处 `defer fence.Reap()` 后收效 |
 
 **已知边界**（除注明外都是"漏收"方向，不会误杀）：
 
@@ -229,13 +229,13 @@ shell 函数调用深度上限 `maxFuncDepth = 512`，超限打
 | 层 | 内容 | 结果 | 门槛 |
 |---|---|---|---|
 | T0 | 单命令 + 参数（20 条） | 20/20 = 100% | 100% |
-| T1 | 管道/串联/重定向/退出码/`cd`（42 条） | 42/42 = 100% | 100% |
-| T2 | 变量/命令替换/参数展开/分词/大括号/printf 格式（57 条） | 57/57 = 100% | 95% |
+| T1 | 管道/串联/重定向/退出码/`cd`（56 条） | 56/56 = 100% | 100% |
+| T2 | 变量/命令替换/参数展开/分词/大括号/printf/赋值前缀/nounset（65 条） | 65/65 = 100% | 95% |
 | T3h | heredoc（30 条） | 30/30 = 100% | 90% |
 | T3c | 控制流/函数/分组（59 条） | 59/59 = 100% | 0%（S7 后 100%） |
 | C | 真实语料高频形态（30 条） | 30/30 = 100% | 100% |
 | X | 边界鲁棒性（30 条） | 30/30 = 100% | 100% |
-| **合计** | | **268/268 = 100%** | |
+| **合计** | | **290/290 = 100%** | |
 
 用例取自真实会话语料、golden 由真 bash 录制（`docs/vbash-bench.md`）。
 

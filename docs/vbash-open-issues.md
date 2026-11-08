@@ -4,7 +4,7 @@
 > 不替代既有文档：能力口径见 `docs/vbash-capability.md`，范围决策见 `docs/vbash-plan.md`，
 > 实施记录见 `docs/vbash-impl.md`。本文只收「已知但未闭合」的条目，修完一项删一项。
 >
-> 状态（2026-11-06）：**P0–P2 全部闭合**。上一轮由调用方（tanya 真实试用）实测暴露的 13 项缺陷
+> 状态（2026-11-09）：**P0–P2 全部闭合**（§7 的 EPIPE 既有缺陷同轮修完）。上一轮由调用方（tanya 真实试用）实测暴露的 13 项缺陷
 > 已全部修完，见 §6；遗留项只剩 §4 的 P3 接线卫生与本文末尾的已知取舍。
 
 ## 摘要
@@ -19,6 +19,7 @@
 | 6 | 管道段/命令替换内看不到已定义的函数 | ~~P2~~ | **已实现**（见 §3.2） |
 | 7 | 复合命令后接带 fd 前缀的重定向解析失败 | ~~P1~~ | **已实现**（见 §3.3） |
 | 8 | 接入侧遗留（死符号、Windows 未真机验证） | P3 | 见 §4 |
+| 21 | 内建写已关闭管道打 `write error: broken pipe` | ~~P2~~ | **已实现**（见 §7） |
 | 9 | heredoc 体内 `$( )`/`$(( ))` 坏、反斜杠转义与续行错 | ~~P0~~ | **已实现**（见 §6.1） |
 | 10 | `test`/`[` 不认负数、把 `010` 当八进制 | ~~P0~~ | **已实现**（见 §6.2） |
 | 11 | `exit -1` 返回 0、`exit abc` 静默 | ~~P0~~ | **已实现**（见 §6.3） |
@@ -371,3 +372,23 @@ vbashrun -c '<命令>'
 行为差分只跑了**纯内建或不触碰文件系统**的用例；`mkdir` 类副作用用例全部落在临时目录内并已清理。
 跨实现差分若需扩到真实语料，必须先读 `AGENTS.md`《构建与测试》末尾的隔离纪律
 （容器 / mount namespace / 只读 bind mount，不得以「子进程 cwd 指向临时目录」代替隔离）。
+
+## 7 已闭合：内建写已关闭管道产生 `broken pipe` 诊断（P2，既有缺陷）
+
+`echo hi | true` 在 vbash 下会往 stderr 打一条
+`<shell>: line 1: echo: write error: write |1: broken pipe`（bash 静默），退出码两边都是 0。
+
+- **成因**：`builtin.go` 的 `echo`/`printf` 对 `io.WriteString` 的返回错误一律当失败打印
+  （`write error: %s`），而管道下游 `true`/`head -2` 提前退出后写端拿到的是 `EPIPE`——
+  这在 bash 里由 SIGPIPE 默认动作（进程被信号终止、不产生诊断）吸收，vbash 作为进程内解释器
+  没有 SIGPIPE 可依赖，必须显式识别 `EPIPE` 并**静默**处理（`syscall.EPIPE`/`io.ErrClosedPipe`）。
+- **复现**：并发下才稳定（`f | ( … ) | cat` 形态 8 路并发 50 轮命中 ~23/400），单跑多数不复现；
+  基线提交 `e1f0917` 同样命中 25/400，**不是本次修复引入的回归**。
+- **影响面**：只污染 stderr，不改退出码；但会让 `2>` 捕获或断言 stderr 为空的脚本/基准抖动
+  （基准 `T3c/128` 因此偶发失败）。
+- **修法**：收敛在 `vbash/io.go` 的 `(*IO).WriteString`（所有内建写 stdout/stderr 的唯一出口）——
+  命中 `syscall.EPIPE` / `io.ErrClosedPipe`（含 `broken pipe` 文案兜底）时返回 nil，其余错误照旧上报。
+  修在出口而非 `echo`/`printf` 各自的分支，避免漏掉其它内建。
+- **守护**：`TestBrokenPipeWriteIsSilent`（4 条形态：`| true`、`printf | true`、`yes | head`、循环管道）
+  与 `TestBrokenPipeKeepsRealWriteErrors`（确认真实写错误不被一并吞掉）。并发压测 8 路 × 50 轮由
+  修复前 23/400 命中降至 0/400。

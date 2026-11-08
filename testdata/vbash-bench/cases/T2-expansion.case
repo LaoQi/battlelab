@@ -258,3 +258,53 @@ command:
 command:
   set -- a b c
   echo "[$*] [$@] [$#]"
+
+--- name: T2/058-assign-prefix-read-persists
+# 赋值前缀不得吞掉 read 自身写入的变量
+command:
+  printf 'a:b\n' > f
+  IFS=: read p q < f
+  echo "[$p][$q]"
+
+--- name: T2/059-assign-prefix-does-not-persist
+# 前缀变量本身不持久，但内建写入照常生效
+command:
+  unset FOO p
+  printf 'x\n' > f
+  FOO=bar read p < f
+  echo "p=[$p] FOO=[$FOO]"
+
+--- name: T2/060-assign-prefix-export-builtin-side-effect
+command:
+  FOO=bar export E=1
+  echo "E=[$E] FOO=[$FOO]"
+
+--- name: T2/061-printf-v-assigns
+# printf -v 写变量且不输出
+command:
+  printf -v v '%s-%s' a b
+  printf -v n '%03d' 7
+  echo "[$v][$n]"
+
+--- name: T2/062-assign-prefix-visible-in-func
+# 前缀变量在函数体内可见、返回后不残留（函数内改全局不回传是已知差异，不在此测）
+command:
+  f(){ echo "in=[$X]"; }
+  X=1 f
+  echo "X=[$X]"
+
+--- name: T2/063-nounset-braced-unbound
+# set -u 对 ${VAR} 同样生效（此前静默返回空）
+command:
+  set -u
+  echo "${nope}"
+
+--- name: T2/064-nounset-default-ops-bypass
+command:
+  set -u
+  echo "[${nope:-d}][${nope-d}][${nope+x}]"
+
+--- name: T2/065-nounset-bang-braced-name
+command:
+  set -u
+  echo "${!}"

@@ -1,6 +1,7 @@
 package vbash
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -311,5 +312,140 @@ func TestArithPower(t *testing.T) {
 	out := runScript(t, dir, "echo $((2**10)) $((2**3**2)) $((1+2**3))")
 	if out.stdout != "1024 512 9\n" {
 		t.Errorf("幂运算失败，输出 %q", out.stdout)
+	}
+}
+
+func TestAssignPrefixKeepsBuiltinSideEffects(t *testing.T) {
+	dir := tempDir(t)
+	if err := os.WriteFile(dir+"/f", []byte("a:b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runScript(t, dir, "IFS=: read p q < f\necho \"[$p][$q]\"")
+	if out.stdout != "[a][b]\n" {
+		t.Errorf("赋值前缀不得吞掉 read 写入的变量，输出 %q stderr %q", out.stdout, out.stderr)
+	}
+}
+
+func TestAssignPrefixItselfDoesNotPersist(t *testing.T) {
+	dir := tempDir(t)
+	if err := os.WriteFile(dir+"/f", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runScript(t, dir, "unset FOO p\nFOO=bar read p < f\necho \"p=[$p] FOO=[$FOO]\"")
+	if out.stdout != "p=[x] FOO=[]\n" {
+		t.Errorf("前缀变量应不持久、内建写入应保留，输出 %q", out.stdout)
+	}
+}
+
+func TestAssignPrefixExportSideEffect(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "FOO=bar export E=1\necho \"E=[$E] FOO=[$FOO]\"")
+	if out.stdout != "E=[1] FOO=[]\n" {
+		t.Errorf("export 的副作用应保留，输出 %q", out.stdout)
+	}
+}
+
+func TestAssignPrefixRestoresPreviousValue(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "V=prev\nV=pre true\necho \"V=[$V]\"")
+	if out.stdout != "V=[prev]\n" {
+		t.Errorf("前缀结束后应恢复原值，输出 %q", out.stdout)
+	}
+}
+
+func TestAssignPrefixLeftToRight(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "unset a b\na=1 b=$((a+1)) sh -c 'echo $a $b'")
+	if out.stdout != "1 2\n" {
+		t.Errorf("前缀应按左到右求值，输出 %q stderr %q", out.stdout, out.stderr)
+	}
+}
+
+func TestPrintfVAssigns(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "printf -v v '%s-%s' a b\nprintf -v n '%03d' 7\necho \"[$v][$n]\"")
+	if out.stdout != "[a-b][007]\n" {
+		t.Errorf("printf -v 应写变量且不输出，输出 %q", out.stdout)
+	}
+}
+
+func TestPrintfVInvalidIdentifier(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "printf -v '1bad' x\necho \"rc=$?\"")
+	if out.code != 0 || out.stdout != "rc=1\n" {
+		t.Errorf("坏标识符应返回 1 并继续，输出 %q rc=%d", out.stdout, out.code)
+	}
+	if !strings.Contains(out.stderr, "not a valid identifier") {
+		t.Errorf("缺少诊断: %q", out.stderr)
+	}
+}
+
+func TestNounsetBracedUnbound(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "set -u\necho \"${nope}\"\necho unreached")
+	if out.code != 127 {
+		t.Errorf("${VAR} 未绑定应退出 127，实际 %d", out.code)
+	}
+	if !strings.Contains(out.stderr, "nope: unbound variable") {
+		t.Errorf("缺少诊断: %q", out.stderr)
+	}
+	if strings.Contains(out.stdout, "unreached") {
+		t.Errorf("应终止脚本: %q", out.stdout)
+	}
+}
+
+func TestNounsetBracedOps(t *testing.T) {
+	dir := tempDir(t)
+	for _, src := range []string{"${nope^^}", "${#nope}", "${nope:0:2}", "${nope#x}", "${nope/x/y}"} {
+		out := runScript(t, dir, "set -u\necho \""+src+"\"")
+		if out.code != 127 {
+			t.Errorf("%s 应触发 nounset，退出码 %d stdout %q", src, out.code, out.stdout)
+		}
+	}
+}
+
+func TestNounsetDefaultOpsBypass(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "set -u\necho \"[${nope:-d}][${nope-d}][${nope:+x}][${nope+x}]\"")
+	if out.stdout != "[d][d][][]\n" {
+		t.Errorf("带默认值的形态应绕过 nounset，输出 %q stderr %q", out.stdout, out.stderr)
+	}
+}
+
+func TestNounsetBangNameHasDollar(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "set -u\necho $!")
+	if !strings.Contains(out.stderr, "$!: unbound variable") {
+		t.Errorf("$! 未绑定应报 $!:，实际 %q", out.stderr)
+	}
+	out = runScript(t, dir, "set -u\necho \"${!}\"")
+	if !strings.Contains(out.stderr, "!: unbound variable") {
+		t.Errorf("${!} 未绑定应报 !:，实际 %q", out.stderr)
+	}
+}
+
+func TestBrokenPipeWriteIsSilent(t *testing.T) {
+	dir := tempDir(t)
+	for _, src := range []string{
+		"echo hi | true",
+		"printf 'x\\n' | true",
+		"yes 2>/dev/null | head -2",
+		"for i in 1 2 3; do echo $i; done | head -1",
+	} {
+		out := runScript(t, dir, src)
+		if strings.Contains(out.stderr, "broken pipe") {
+			t.Errorf("%q 不应产生 broken pipe 诊断: %q", src, out.stderr)
+		}
+		if out.code != 0 {
+			t.Errorf("%q 退出码应为 0，实际 %d stderr %q", src, out.code, out.stderr)
+		}
+	}
+}
+
+func TestBrokenPipeKeepsRealWriteErrors(t *testing.T) {
+	dir := tempDir(t)
+	out := runScript(t, dir, "exec 3>/dev/null\nexec 3>&-\necho hi >&3")
+	if !strings.Contains(out.stderr, "Bad file descriptor") && !strings.Contains(out.stderr, "write error") {
+		t.Errorf("真实写错误仍应报出，实际 %q", out.stderr)
 	}
 }

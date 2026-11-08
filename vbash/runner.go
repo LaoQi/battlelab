@@ -407,7 +407,8 @@ func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
 		assignments = append(assignments, a)
 	}
 	if len(assignments) > 0 {
-		saved := r.Env.Clone()
+		saved := savePrefixVars(r.Env, assignments)
+		defer restorePrefixVars(r.Env, saved)
 		for _, a := range assignments {
 			value, err := r.expn.expandToString(a.Value)
 			if err != nil {
@@ -416,7 +417,6 @@ func (r *Runner) runCommand(cmd *Command, io *IO) (int, error) {
 			r.Env.SetExported(a.Name, value)
 		}
 		code, err := r.dispatch(argv, io, cmd.Pos)
-		r.Env.vars = saved.vars
 		r.Env.SetStatus(code)
 		return code, err
 	}

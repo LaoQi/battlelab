@@ -1,0 +1,9 @@
+{
+ "exit": 0,
+ "files": [
+  "f"
+ ],
+ "stderr": "",
+ "stdout": "p=[x] FOO=[]\n",
+ "timeout": false
+}

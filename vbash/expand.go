@@ -275,7 +275,7 @@ func (x *expansion) parameter(seg Segment) (string, error) {
 		value, _ := x.env.Lookup(seg.Inner)
 		return value, nil
 	}
-	return x.braced(seg.Inner, seg.Mode)
+	return x.bracedAt(seg.Inner, seg.Mode, seg.Pos)
 }
 
 type bracedOp struct {
@@ -366,6 +366,10 @@ func isBracedSpecialName(expr string) bool {
 }
 
 func (x *expansion) braced(expr string, mode WordMode) (string, error) {
+	return x.bracedAt(expr, mode, Pos{})
+}
+
+func (x *expansion) bracedAt(expr string, mode WordMode, pos Pos) (string, error) {
 	spec, err := x.parseBraced(expr)
 	if err != nil {
 		return "", err
@@ -377,6 +381,11 @@ func (x *expansion) braced(expr string, mode WordMode) (string, error) {
 		return strings.Join(x.env.Args(), " "), nil
 	}
 	value, set := x.env.Lookup(spec.name)
+	if x.env.NounSet && !set {
+		if name, ok := bracedUnboundName(spec); ok {
+			return "", x.runs.unboundAt(name, pos)
+		}
+	}
 	switch spec.op {
 	case "":
 		return value, nil

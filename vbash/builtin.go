@@ -290,13 +290,33 @@ func readHexDigits(s string, max int) (int, int) {
 
 func builtinPrintf(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	args := argv[1:]
+	varName, hasVar := "", false
+	if len(args) >= 2 && args[0] == "-v" {
+		varName, hasVar = args[1], true
+		args = args[2:]
+	} else if len(args) >= 1 && args[0] == "-v" {
+		r.diagfName(io.Err, pos, "printf", "usage: printf [-v var] format [arguments]")
+		return 2, nil
+	}
 	if len(args) == 0 {
-		r.diagfName(io.Err, pos, "printf", "usage: printf format [arguments]")
+		r.diagfName(io.Err, pos, "printf", "usage: printf [-v var] format [arguments]")
 		return 2, nil
 	}
 	format := args[0]
 	values := args[1:]
 	out, warn := formatPrintf(format, values)
+	if hasVar {
+		if !validAssignName(varName) {
+			r.diagfName(io.Err, pos, "printf", "%s: not a valid identifier", "`"+varName+"'")
+			return 1, nil
+		}
+		if warn != "" {
+			r.diagfName(io.Err, pos, "printf", "%s", warn)
+			return 1, nil
+		}
+		r.Env.Set(varName, out, false)
+		return 0, nil
+	}
 	if werr := io.WriteString(io.Out, out); werr != nil {
 		r.diagfName(io.Err, pos, "printf", "write error: %s", werr.Error())
 		return 1, nil

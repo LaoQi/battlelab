@@ -251,3 +251,37 @@ func joinPath(dir, name string) string {
 	}
 	return path.Clean(dir + "/" + name)
 }
+
+type prefixSave struct {
+	name     string
+	value    string
+	exported bool
+	existed  bool
+}
+
+func savePrefixVars(e *Env, assigns []Assign) []prefixSave {
+	saved := make([]prefixSave, 0, len(assigns))
+	seen := make(map[string]bool, len(assigns))
+	for _, a := range assigns {
+		if seen[a.Name] {
+			continue
+		}
+		seen[a.Name] = true
+		ps := prefixSave{name: a.Name}
+		if v, ok := e.vars[a.Name]; ok {
+			ps.value, ps.exported, ps.existed = v.Value, v.Exported, true
+		}
+		saved = append(saved, ps)
+	}
+	return saved
+}
+
+func restorePrefixVars(e *Env, saved []prefixSave) {
+	for _, ps := range saved {
+		if !ps.existed {
+			delete(e.vars, ps.name)
+			continue
+		}
+		e.vars[ps.name] = &Var{Value: ps.value, Exported: ps.exported}
+	}
+}

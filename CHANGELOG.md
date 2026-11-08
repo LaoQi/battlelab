@@ -1,3 +1,42 @@
+## 2026-11-09 fix(vbash): 赋值前缀吞副作用、nounset 漏 `${}`、EPIPE 误诊断；tanya 接线围栏并默认 vbash
+
+调用方（tanya）试用前的阻塞项修复，三处均为**静默错误**（不报错、返回错误结果），危害高于报错类缺口：
+
+- **赋值前缀吞掉内建副作用（P0）**：`runner.go` 原先在派发前 `saved := r.Env.Clone()`、派发后
+  `r.Env.vars = saved.vars` 整体回滚，内建自己写的变量一并被抹——`IFS= read -r line < f` 读出的
+  `line` 恒为空、`FOO=bar export E=1` 的 `E` 丢失、`printf -v v` 的 `v` 丢失（**且静默返回 0**，
+  agent 会当成「文件是空的」继续跑）。改为只回滚**前缀变量名**本身：新增
+  `env.go` 的 `savePrefixVars`/`restorePrefixVars`，命中 bash 语义——前缀不持久（结束恢复原值，
+  含内建写同名变量的情形 `V=prev; V=pre read V` → `prev`）、内建副作用保留，求值顺序左到右。
+  函数分支同样保留函数体对全局变量的赋值（原先也一并丢失）。
+- **`set -u` 对 `${VAR}` 完全不生效（P0）**：nounset 检查只挂在 `SegVar`（`$VAR`）上，
+  `${nope}`/`${#nope}`/`${nope^^}`/`${nope:0:2}`/`${nope#x}`/`${nope/x/y}` 全部静默返回空。
+  新增 `bracedUnboundName`（`nounset.go`）并在 `bracedAt()` 入口统一检查；带默认值的
+  `:-`/`-`/`:=`/`=`/`:+`/`+`/`?`/`:?` 豁免（`bracedOpSuppliesDefault`）。报错名按 bash 口径区分：
+  `$!` 报 `$!`、`${!}` 报 `!`、`$9` 报 `$9`、`${9}` 报 `9`（`expandUnboundName` 的白名单原先漏了 `!`，
+  即基准里唯一失败的 `T1/054`）。`parameter()` 改为把 `seg.Pos` 透传给 `bracedAt`，行号不再丢失。
+- **`printf -v var` 未实现**：原实现把 `-v` 当普通参数，输出 `-vv=` 之类的垃圾。补上后写变量、
+  不输出、坏标识符报 `not a valid identifier`（退出码 1 且继续）、`-v` 缺参报 usage（退出码 2）。
+- **内建写已关闭管道误报 `broken pipe`（P2，既有缺陷，非本轮回归）**：`echo hi | true` 会往 stderr
+  打 `echo: write error: write |1: broken pipe`（bash 静默）。bash 由 SIGPIPE 默认动作吸收，vbash
+  作为进程内解释器没有信号可依赖。收敛在唯一出口 `(*IO).WriteString`：命中 `syscall.EPIPE` /
+  `io.ErrClosedPipe`（含文案兜底）返回 nil，其余错误照旧上报。这是基准 `T3c/128` 偶发失败的根因
+  （并发 8 路 × 50 轮：修复前 23/400 命中、基线提交 `e1f0917` 同样 25/400，修复后 0/400）。
+
+**tanya 侧**（另一仓库，随本轮一起验证）：`main.go` 在 `cfg.Vbash` 为真时启动
+`vbash.EnableSubreaper()` + `NewFence()` 并 `defer fence.Reap()`，经 `tools.Options.Fence` 传入。
+首轮只把 `Reap` 挂在 `exitNow` 上不够——`ask`/REPL 正常结束走 `main` 直接 `return`，围栏从不执行
+（实测 `sleep 240 &` 在进程退出后仍在跑）；改为构造处 `defer` 后端到端确认无残留。配置项 `vbash`
+默认值本就是 `true`（`config.Default()`），本轮确认加载链路无覆盖，`tanya config` 输出 `vbash: true`。
+
+**测试**：基准新增 T2/058–065（赋值前缀 5 条 + `printf -v` + nounset 三条，golden 由真 bash 录制），
+总数 282 → **290，七层 100%**；单测新增 13 条（赋值前缀 5、`printf -v` 2、nounset 4、EPIPE 2）。
+`T1/054` 由失败转绿。另用 50 条 agent 日常写法在 bwrap 隔离沙箱内与真 bash 差分，
+stdout+退出码 **50/50 一致**。
+
+**验收**：`gofmt -l` 干净、`go build`/`vet ./...`、`go test ./...` 与 `vbash`/`tools/...` 的 `-race`
+全绿、`make cross` 通过、基准连跑 5 次 290/290。
+
 ## 2026-11-07 fix(vbash): 围栏真落地——登记全集/管理 `&` 子集/sid 判放行，作业表回归纯语义
 
 前一轮 review 定位的九项缺陷全部闭合（探针均有真 bash 对照），核心是把「作业表既当 `wait`/`$!`
