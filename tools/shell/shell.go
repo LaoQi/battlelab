@@ -93,39 +93,33 @@ func builtinProfile() *profile {
 	return &profile{Name: BuiltinShellName, Kind: KindPosix, Builtin: true}
 }
 
-// Invocation 是一次性旁路执行（终端通知等）复用的 shell 入口：Argv 为解释器路径 + 固定参数，Kind 决定引号规则。
+// Invocation 是一次性旁路执行的 shell 入口（终端通知等）：Argv 为解释器路径 + 固定参数，
+// Builtin 为真时 Argv 为空——命令由进程内解释器执行，不依赖宿主 shell；Kind 决定引号规则。
 type Invocation struct {
-	Argv []string
-	Name string
-	Kind Kind
+	Argv    []string
+	Name    string
+	Kind    Kind
+	Builtin bool
 }
 
 // Resolve 按 run_shell 同一套解析（配置覆盖 > 平台探测）出 shell 入口，供环境段与通知命令等旁路复用。
 func Resolve(override string) (Invocation, error) {
-	p, err := resolveProfile(override, exec.LookPath)
+	return resolve(override, exec.LookPath)
+}
+
+func resolve(override string, lookPath func(string) (string, error)) (Invocation, error) {
+	p, err := resolveProfile(override, lookPath)
 	if err != nil {
 		return Invocation{}, err
 	}
 	if p.Builtin {
-		return Invocation{Argv: platformFallbackArgv(), Name: p.Name, Kind: p.Kind}, nil
+		return Invocation{Name: p.Name, Kind: p.Kind, Builtin: true}, nil
 	}
 	argv := make([]string, 0, len(p.ExtraArgs)+2)
 	argv = append(argv, p.Path)
 	argv = append(argv, p.ExtraArgs...)
 	argv = append(argv, p.arg())
 	return Invocation{Argv: argv, Name: p.Name, Kind: p.Kind}, nil
-}
-
-func platformFallbackArgv() []string {
-	p, err := firstAvailable(platform.Candidates, exec.LookPath)
-	if err != nil || p == nil {
-		return nil
-	}
-	argv := make([]string, 0, len(p.ExtraArgs)+2)
-	argv = append(argv, p.Path)
-	argv = append(argv, p.ExtraArgs...)
-	argv = append(argv, p.arg())
-	return argv
 }
 
 func firstAvailable(candidates []string, lookPath func(string) (string, error)) (*profile, error) {

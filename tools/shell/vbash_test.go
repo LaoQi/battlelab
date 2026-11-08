@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -295,15 +296,32 @@ func TestRegularShellStaysNonBuiltin(t *testing.T) {
 	}
 }
 
-func TestResolveBuiltinFallsBackToHostShell(t *testing.T) {
-	inv, err := Resolve(BuiltinShellName)
+func TestResolveBuiltinNeedsNoHostShell(t *testing.T) {
+	inv, err := resolve(BuiltinShellName, lookPathStub("bash", "sh"))
 	if err != nil {
 		t.Fatalf("Resolve(%q) 失败: %v", BuiltinShellName, err)
+	}
+	if !inv.Builtin {
+		t.Fatal("内置解释器应标记 Builtin，供调用方选执行路径")
 	}
 	if inv.Name != BuiltinShellName {
 		t.Errorf("Name 应为 %q，实际 %q", BuiltinShellName, inv.Name)
 	}
-	if len(inv.Argv) == 0 {
-		t.Error("旁路执行（通知命令）需要真实 argv，内置解释器应回落到宿主 shell")
+	if len(inv.Argv) != 0 {
+		t.Errorf("内置解释器无需宿主 argv，实际 %q", inv.Argv)
+	}
+}
+
+func TestResolveBuiltinIgnoresLookPath(t *testing.T) {
+	called := false
+	lookPath := func(string) (string, error) {
+		called = true
+		return "", errors.New("not found")
+	}
+	if _, err := resolve("vbash", lookPath); err != nil {
+		t.Fatalf("内置解释器不应依赖 PATH: %v", err)
+	}
+	if called {
+		t.Error("解析内置解释器不应查 PATH")
 	}
 }

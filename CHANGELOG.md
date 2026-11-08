@@ -1,3 +1,23 @@
+## 2026-11-09 fix(tools): 旁路执行不再回落系统 shell，`Invocation.Run` 统一两条执行路径
+
+上一轮把 `Resolve("vbash")` 的 `Argv` 回落到平台首个可用 shell，让通知命令在
+`shell: vbash` 时悄悄回到系统 shell 执行——既与「不回落系统 shell」的既有口径
+（`docs/vbash-plan.md` D9）冲突，也让默认配置暗含一个对系统 bash 的硬依赖。
+
+- **`Invocation` 增 `Builtin`**：解析为内置解释器时 `Argv` 为空、不查 `PATH`、不依赖磁盘上有该文件；
+  删除 `platformFallbackArgv`（该回落正是问题本身）。
+- **新增 `Invocation.Run(ctx, script, RunOptions)`**：旁路执行的唯一入口，按 `Builtin` 分派——
+  内置走 `vbash.RunScript`（`Arg0`/`ShellName`/`ConfigureCmd`/`CancelCmd`/`Fence` 都在库内组装），
+  真实 shell 走 `argv + script` 子进程（同一套平台组杀与 `WaitDelay`）。调用方只给
+  `Dir`/`Home`/`Env`/stdio/`Fence`，不必自己抄一遍 `vbash.Config` 的平台策略。
+- **`RunOptions.Stdin` 为空时给空读取器**（内置路径用 `emptyStdin()`，与 `runVbash` 同一份），
+  避免解释器侧 `read` 拿到 nil reader。
+- **新增 `ErrNoInvocation`**：既非内置又没有 `Argv` 时报错而非静默成功。
+
+测试：`TestResolveBuiltinNeedsNoHostShell`、`TestResolveBuiltinIgnoresLookPath`（`LookPath` 一次都不被调用）、
+`TestRunBuiltinExecutesScript`、`TestRunBuiltinUsesDirAndEnv`、`TestRunBuiltinHonorsContext`、
+`TestRunRealShellExecutesScript`、`TestRunRealShellReportsFailure`、`TestRunWithoutArgvFails`。
+
 ## 2026-11-09 refactor(tools)!: vbash 并入 shell 配置项，取消独立布尔开关
 
 **破坏性变更**：`tools/shell.Config.Vbash` 与 `tools.Options.Vbash` 删除。内置解释器不再是

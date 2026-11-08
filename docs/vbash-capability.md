@@ -42,6 +42,7 @@ tool, err := shell.New(shell.Config{
 | 判断入口 | `shell.IsBuiltin(name)`：供调用方判断某取值是否指向内置解释器（大小写/首尾空白不敏感） |
 | 宿主为 pwsh / cmd | 与宿主无关：写 `vbash` 即生效，命令仍按 bash 语法书写（Windows 上的目标场景） |
 | `interactive: true` | **不经解释器**，仍借终端直跑（终端所有权属 `ctty`） |
+| 旁路执行（通知等） | 同样进解释器：`shell.Resolve` 给出 `Invocation{Builtin: true}`，`Run` 不回落系统 shell |
 
 ## 3 能力矩阵
 

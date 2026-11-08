@@ -222,7 +222,7 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 | `tools/shell.Config` | `Environ` | 解析为内置解释器时**必填**（`func() []string`）：`vbash` 是纯库不读 `os.Environ`，外部命令的环境由此注入；缺失在 `New` 期报错 |
 | 判断入口 | `shell.IsBuiltin(name)` | 供调用方判断某个配置值是否指向内置解释器（大小写与首尾空白不敏感），如决定是否接线进程围栏 |
 | 宿主 shell | — | 与宿主实际装了什么无关：`pwsh`/`cmd` 宿主的 Windows 上写 `shell: vbash` 同样生效（跨平台归一正是目标），命令仍按 bash 写法；描述走 `describeVbash` |
-| 旁路执行 | `shell.Resolve("vbash")` | 通知命令等一次性旁路仍要真实 argv，此时 `Name` 为 `vbash`、`Argv` **回落到平台首个可用 shell**（`platformFallbackArgv`） |
+| 旁路执行 | `shell.Resolve("vbash")` + `Invocation.Run` | `Invocation` 增 `Builtin`：内置解释器时 `Argv` 为空、不查 `PATH`；`Run(ctx, script, RunOptions)` 按 `Builtin` 分派（解释器 / 真实 shell `argv + script`），平台组杀与 `WaitDelay` 都在库内，调用方不必自己抄一遍 vbash 配置 |
 | 行为 | `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
 | 行为 | 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
 | 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」**并列出不支持的构造**（`case`/`[[ ]]`/反引号/`<<<`/`(( ))`/进程替换/数组/函数内改全局变量/`${V:off:len}`/算术 `n++` 与 `**`/`set -o pipefail`/`$RANDOM`），给出替代写法——不列清单模型只能靠报错试错 |

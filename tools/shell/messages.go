@@ -6,7 +6,10 @@ import (
 	"github.com/LaoQi/battlelab/agent"
 )
 
-var ErrNoLend = errors.New(agent.MsgErrPrefix + "interactive 不支持（无法借出终端）")
+var (
+	ErrNoLend       = errors.New(agent.MsgErrPrefix + "interactive 不支持（无法借出终端）")
+	ErrNoInvocation = errors.New(agent.MsgErrPrefix + "旁路执行缺少 shell 入口")
+)
 
 const (
 	MsgBadCwd              = agent.MsgErrPrefix + "cwd 不存在或不是目录: %s"

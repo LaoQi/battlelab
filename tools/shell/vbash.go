@@ -32,7 +32,7 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 		Arg0:         vbashArg0(t.profile),
 		Stdout:       &stdout,
 		Stderr:       &stderr,
-		Stdin:        strings.NewReader(""),
+		Stdin:        emptyStdin(),
 		ShellName:    vbashShellName(t.profile),
 		ConfigureCmd: platform.ConfigureGroup,
 		CancelCmd:    platform.KillGroup,
