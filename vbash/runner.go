@@ -114,6 +114,11 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 	out := cfg.Stdout
 	errw := cfg.Stderr
 	in := cfg.Stdin
+	if in == nil {
+		// 未给 stdin 视作空输入（读即 EOF，等价 /dev/null），而不是 nil reader：
+		// nil 会被 IO.bufferedInput 包成非 nil 的 *bufio.Reader，read 内建随后就读空指针 panic。
+		in = emptyReader()
+	}
 	r.IO = &IO{In: in, Out: out, Err: errw}
 	r.expn = &expansion{env: env, runs: r, io: r.IO}
 	return r

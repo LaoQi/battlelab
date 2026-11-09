@@ -22,7 +22,7 @@ func TestPlatformComplete(t *testing.T) {
 	}
 	if platform.ConfigureGroup == nil || platform.KillGroup == nil || platform.ProtectSignals == nil ||
 		platform.ExitCode == nil || platform.Capabilities == nil ||
-		platform.DecodeOutput == nil {
+		platform.DecodeOutput == nil || platform.ConfigureTTY == nil || platform.TTYEnv == nil {
 		t.Errorf("平台能力存在缺项: %+v", platform)
 	}
 	for _, p := range platform.Programs {
@@ -36,8 +36,11 @@ func TestFillDefaults(t *testing.T) {
 	p := fillDefaults(shellPlatform{})
 	if p.ConfigureGroup == nil || p.KillGroup == nil || p.ProtectSignals == nil ||
 		p.ExitCode == nil || p.Capabilities == nil ||
-		p.DecodeOutput == nil {
+		p.DecodeOutput == nil || p.ConfigureTTY == nil || p.TTYEnv == nil {
 		t.Fatalf("零值表应补全函数字段: %+v", p)
+	}
+	if p.PtyLend {
+		t.Error("默认不假定 LendFull 借出的是 pty")
 	}
 	cmd := &exec.Cmd{}
 	p.ConfigureGroup(cmd)
@@ -56,5 +59,16 @@ func TestFillDefaults(t *testing.T) {
 	}
 	if code, ok := p.ExitCode(errors.New("boom")); ok || code != 0 {
 		t.Errorf("非 ExitError 不应给出退出码: code=%d ok=%v", code, ok)
+	}
+
+	// 默认的 TTY 能力是 no-op：不动 SysProcAttr、不改环境。
+	ttyCmd := &exec.Cmd{}
+	p.ConfigureTTY(ttyCmd, nil)
+	if ttyCmd.SysProcAttr != nil {
+		t.Errorf("默认控制终端配置应为 no-op: %+v", ttyCmd.SysProcAttr)
+	}
+	env := []string{"A=1"}
+	if got := p.TTYEnv(env, nil); len(got) != 1 || got[0] != "A=1" {
+		t.Errorf("默认 TTYEnv 应原样返回: %v", got)
 	}
 }

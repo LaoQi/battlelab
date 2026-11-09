@@ -1,7 +1,6 @@
 package vbash
 
 import (
-	"bufio"
 	"errors"
 	"io"
 	"os"
@@ -111,13 +110,16 @@ func (x *IO) extraFds() []int {
 	return out
 }
 
-func (x *IO) bufferedInput() *bufio.Reader {
-	if br, ok := x.In.(*bufio.Reader); ok {
-		return br
+// input 返回 fd 0 的当前读取端。未注入视作空输入（读即 EOF，等价 /dev/null）。
+// 这里刻意不做缓冲包装：fd 0 必须原样留给后续的外部命令——
+// 换成 *bufio.Reader 会让 os/exec 走管道拷贝（拿到非 *os.File 时），
+// 而终端上的 fd 0 不会 EOF，`read x; some-cmd` 于是双向卡死；
+// 缓冲器预读还会吞掉本该交给下一条命令的输入。
+func (x *IO) input() io.Reader {
+	if x.In == nil {
+		return emptyReader()
 	}
-	br := bufio.NewReader(x.In)
-	x.In = br
-	return br
+	return x.In
 }
 
 func (x *IO) clone() *IO {

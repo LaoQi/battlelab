@@ -169,7 +169,7 @@
 | `$?` 范围 | 0–255 |
 | 区分大小写命令名 | Windows 不敏感，保持宿主行为 |
 | `/dev/null` | 内部识别，映射到 `os.DevNull`（Windows = `NUL`） |
-| stdin 非 tty | 与现状一致：普通命令 stdin 为空设备；`interactive: true` 才借终端 |
+| stdin 非 tty | 与现状一致：普通命令 stdin 为空设备；`interactive: true` 才借终端（借来的 pty 同时作解释器 stdio 与前台子进程控制终端） |
 
 ### 5.4 分片落点（S6 实施口径）
 
@@ -214,7 +214,10 @@ run_shell(command)
 - `vbash` 是**纯库**，不依赖 `tools/shell`（避免反向依赖）；`tools/shell` 依赖 `vbash`
 - 虚拟层失败（`ErrUnsupported` / 内部错误）**直接报错，不回落真 shell**：本特性是实验性质，
   不追求完备支持；静默回落会掩盖解释器缺陷、让"跨平台一致"的目标失去可观测性
-- `interactive: true` **不走虚拟层**，直接交宿主 shell（终端所有权是 `ctty` 的事）
+- `interactive: true` **仍走虚拟层**，但需要先借到终端：借来的 pty 充作解释器的 stdio 与前台
+  子进程的控制终端，**不回落宿主 shell**（更正 2026-11-09：原文写"直接交宿主 shell"，那正是
+  `shell: vbash` 下 interactive 必定失败 `exec: no command` 的来源，也让解释器暗中依赖了它
+  刻意要脱离的系统 shell）
 - 平台分片：`vbash/platform_linux.go` / `_darwin.go` / `_windows.go` + stub（D3）；
   差异表与归一规则见 §5.4
 

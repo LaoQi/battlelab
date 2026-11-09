@@ -1,3 +1,32 @@
+## 2026-11-09 fix(vbash): interactive 改由解释器自己拿终端，不再报 `exec: no command`
+
+`shell: vbash` 下 `interactive: true` 必定失败：`builtinProfile()` 的 `Path` 是空串，
+而 `run()` 在判 `profile.Builtin` **之前**就走 `runFull` → `exec.CommandContext(ctx, "", ...)`
+→ Go 报 `exec: no command`。根因不是终端借出，而是"interactive 不经解释器"这个设计口径本身：
+它让 vbash 暗中依赖了刻意要脱离的系统 shell。
+
+- **`runVbashInteractive`**（`tools/shell/vbash.go`）：`LendFull` 借出 pty，slave 同时作解释器的
+  stdin/stdout/stderr（输出经 pty 泵实时上屏，也进工具结果）；命令照旧进 `vbash.RunScript`。
+  借不到终端即报 `interactive 不支持（无法借出终端）`——不回落系统 shell，也不静默降级成无终端执行。
+- **控制终端只给前台命令**：新增平台能力 `ConfigureTTY`，判据是「子进程的 stdin 正好是借出的 slave」。
+  后台命令（fd0 已被换成空读取器）、管道段、重定向命令都不满足。同时外部命令**一律进独立会话**
+  （`Setsid` 替换 `Setpgid`）：否则它们继承调用方会话，后台命令照样能打开 `/dev/tty` 抢走终端。
+- **`GPG_TTY`/`SSH_TTY` 指向借出的设备**（平台能力 `TTYEnv`），否则 gpg/ssh 会去问 agent 要终端。
+- **`read` 不再劫持 fd 0**（`vbash/builtin.go`/`io.go`）：原先 `bufferedInput()` 把 stdin 包成
+  `*bufio.Reader` 并写回 `IO.In`，带来两个后果——预读吞掉后一条命令的输入（`read x; head -1`），
+  以及 fd 0 变成非 `*os.File` 后 `os/exec` 改走管道拷贝、在不会 EOF 的终端上双向死锁
+  （实测 `read -r x; sh -c 'tty'` 永久挂起）。现在 `read` 逐字节读底层 reader，fd 0 原样留给外部命令。
+- **平台表增字段**：`shellPlatform.PtyLend`/`ConfigureTTY`/`TTYEnv`，posix（linux/darwin）实现，
+  Windows/stub 为 no-op 默认（`CONIN$` 直通平台仍只有 stdin 是终端，输出走结果管道）。
+
+测试：`tools/shell/vbash_interactive_linux_test.go`（pty 集成：内建 read 可读、外部命令拿到真实 pts
+与 `/dev/tty`、`GPG_TTY`/`SSH_TTY`、read 后外部命令不挂、后台命令不拿控制终端、借不到即报错、
+退出码与超时）；`vbash/fixes_test.go` 增 `TestReadDoesNotConsumeNextCommandInput` 与
+`TestInputNilGuard`；原 `TestVbashInteractiveBypasses` 改名 `TestVbashInteractiveStillRunsInInterpreter`。
+实机：`script` 下真实 tty 的 vbash interactive 用例（含"直接读 `/dev/tty`"的加密口令式取终端）通过。
+文档同步：`docs/vbash-capability.md`（新增 §3.6）、`docs/vbash-plan.md`、`docs/vbash-impl.md`、
+`docs/shell-tool.md` §17。
+
 ## 2026-11-09 fix(tools): 旁路执行不再回落系统 shell，`Invocation.Run` 统一两条执行路径
 
 上一轮把 `Resolve("vbash")` 的 `Argv` 回落到平台首个可用 shell，让通知命令在

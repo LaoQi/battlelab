@@ -41,7 +41,7 @@ tool, err := shell.New(shell.Config{
 | `Override: "vbash"` | 进程内解释器，**不查 `PATH`**、不要求磁盘上存在该文件 |
 | 判断入口 | `shell.IsBuiltin(name)`：供调用方判断某取值是否指向内置解释器（大小写/首尾空白不敏感） |
 | 宿主为 pwsh / cmd | 与宿主无关：写 `vbash` 即生效，命令仍按 bash 语法书写（Windows 上的目标场景） |
-| `interactive: true` | **不经解释器**，仍借终端直跑（终端所有权属 `ctty`） |
+| `interactive: true` | 仍由**解释器执行**，但必须先借到终端：借来的 pty 同时充当解释器的 stdin/stdout/stderr 与前台子进程的控制终端（见 §3.6） |
 | 旁路执行（通知等） | 同样进解释器：`shell.Resolve` 给出 `Invocation{Builtin: true}`，`Run` 不回落系统 shell |
 
 ## 3 能力矩阵
@@ -174,7 +174,31 @@ shell 函数调用深度上限 `maxFuncDepth = 512`，超限打
 | 被信号杀 | POSIX `128+signum`；Windows 取退出码低 8 位，Ctrl-C（`0xC000013A`）记 130 |
 
 宿主 shell 是 pwsh/cmd 时也**允许**开启 vbash——这正是 Windows 上的目标场景，命令仍按 bash 语法书写。
-`interactive: true` 例外：它不经解释器，直接交宿主 shell。
+`interactive: true` 同样由解释器承担，**不回落宿主 shell**，见下节。
+
+### 3.6 interactive：解释器自己拿终端
+
+`interactive: true` 只改变「终端从哪来」，不改变「命令由谁执行」——命令照旧进解释器，
+否则 `shell: vbash` 就暗中依赖了它刻意要脱离的系统 shell（跨平台归一会当场失效）。
+
+| 平台 | 借出的终端 | 解释器 stdio | 外部命令能否拿控制终端 |
+|---|---|---|---|
+| Linux | pty（`LendFull` 走 pty 泵） | stdin/stdout/stderr 全是 pty slave，输出实时上屏并进工具结果 | 能：前台子进程以该 slave 为控制终端 |
+| macOS | 同 Linux | 同上 | 同上（`make cross` 仅保证编译通过，未真机验证） |
+| Windows | `CONIN$` 直通 | 只有 stdin 是终端，输出仍走结果管道 | 无 `/dev/tty` 概念 |
+
+关键语义：
+
+- **控制终端只给前台命令**：判据是「子进程的 stdin 正好是借出的 pty slave」。后台命令（fd0 已被解释器
+  换成空读取器）、管道段、带重定向的命令都不满足，因此拿不到控制终端。
+- **外部命令一律进独立会话**：否则它们继承调用方（REPL）的会话与控制终端，后台命令也能打开
+  `/dev/tty` 抢走终端。入新会话且不设控制终端时 `/dev/tty` 直接打不开（`ENXIO`）。
+- **`GPG_TTY`/`SSH_TTY` 指向借出的设备**：gpg、ssh 否则会去问 agent 要终端或读到一个已失效的旧值。
+- **借不到终端即报错**（`interactive 不支持（无法借出终端）`），既不回落系统 shell，也不静默降级成
+  无终端执行——后者会让 `sudo`/`ssh` 挂起或读空。
+- **`read` 不预读 fd 0**：解释器的 `read` 逐字节读，绝不套 `bufio`。否则 `read x; head -1` 会把
+  后一条命令的输入吞进缓冲区；更糟的是 fd 0 被换成非 `*os.File` 后，`os/exec` 会改用管道拷贝，
+  而终端不会 EOF，`read x; some-cmd` 当场双向卡死。
 
 ## 4 语义细节速查
 

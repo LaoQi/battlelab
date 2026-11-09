@@ -10,4 +10,7 @@ var platform = fillDefaults(shellPlatform{
 	ExitCode:       posixExitCode,
 	Programs:       posixPrograms,
 	Capabilities:   posixCapabilities,
+	PtyLend:        true,
+	ConfigureTTY:   posixConfigureTTY,
+	TTYEnv:         posixTTYEnv,
 })

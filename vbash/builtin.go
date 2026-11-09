@@ -634,7 +634,7 @@ func builtinRead(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 		}
 		return 1, nil
 	}
-	line, err := readLine(io.bufferedInput())
+	line, err := readLine(io.input())
 	if err != nil && line == "" {
 		for _, name := range names {
 			r.Env.Set(name, "", false)
@@ -663,14 +663,33 @@ func builtinRead(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	return 0, nil
 }
 
+// readLine 读一行，且**不预读** fd 0 之后的字节（与 bash 的 read 一致）：
+// `read x; head -1` 里的 head 必须还能读到下一行，所以这里按字节读到底层 reader，
+// 绝不套 bufio（预读会把后续命令的输入吞进缓冲区）。
 func readLine(rd io.Reader) (string, error) {
 	if rd == nil {
 		return "", io.EOF
 	}
-	br, ok := rd.(*bufio.Reader)
-	if !ok {
-		br = bufio.NewReader(rd)
+	if br, ok := rd.(*bufio.Reader); ok {
+		line, err := br.ReadString('\n')
+		return strings.TrimSuffix(line, "\n"), err
 	}
-	line, err := br.ReadString('\n')
-	return strings.TrimSuffix(line, "\n"), err
+	var b strings.Builder
+	var one [1]byte
+	for {
+		n, err := rd.Read(one[:])
+		if n > 0 {
+			if one[0] == '\n' {
+				return b.String(), nil
+			}
+			b.WriteByte(one[0])
+		}
+		if err != nil {
+			if err == io.EOF && b.Len() > 0 {
+				// 与 bash 一致：EOF 前有半行数据时照常赋值，read 返回 1。
+				return b.String(), io.EOF
+			}
+			return b.String(), err
+		}
+	}
 }

@@ -18,6 +18,16 @@ type shellPlatform struct {
 	Programs       []string
 	Capabilities   func(*profile) string
 	DecodeOutput   func([]byte) string
+
+	// PtyLend 表示 LendFull 借出的是 pty 设备：可同时承载子进程的 stdin/stdout/stderr
+	// 并充当控制终端。为 false 时（Windows 的 CONIN$ 直通）只有 stdin 可用，
+	// 输出仍走工具结果管道。
+	PtyLend bool
+	// ConfigureTTY 把借出的终端设备设为子进程的控制终端——仅当该子进程的 stdin
+	// 正是这个设备时生效（后台、管道、重定向命令一律跳过）。
+	ConfigureTTY func(*exec.Cmd, *os.File)
+	// TTYEnv 把 GPG_TTY/SSH_TTY 等变量指向借出的设备（非 pty 平台为 no-op）。
+	TTYEnv func([]string, *os.File) []string
 }
 
 var protectOnce sync.Once
@@ -46,8 +56,18 @@ func fillDefaults(p shellPlatform) shellPlatform {
 	if p.DecodeOutput == nil {
 		p.DecodeOutput = identityOutput
 	}
+	if p.ConfigureTTY == nil {
+		p.ConfigureTTY = noopConfigureTTY
+	}
+	if p.TTYEnv == nil {
+		p.TTYEnv = identityTTYEnv
+	}
 	return p
 }
+
+func noopConfigureTTY(*exec.Cmd, *os.File) {}
+
+func identityTTYEnv(env []string, _ *os.File) []string { return env }
 
 func identityOutput(b []byte) string { return string(b) }
 

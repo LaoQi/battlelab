@@ -223,7 +223,7 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 | 判断入口 | `shell.IsBuiltin(name)` | 供调用方判断某个配置值是否指向内置解释器（大小写与首尾空白不敏感），如决定是否接线进程围栏 |
 | 宿主 shell | — | 与宿主实际装了什么无关：`pwsh`/`cmd` 宿主的 Windows 上写 `shell: vbash` 同样生效（跨平台归一正是目标），命令仍按 bash 写法；描述走 `describeVbash` |
 | 旁路执行 | `shell.Resolve("vbash")` + `Invocation.Run` | `Invocation` 增 `Builtin`：内置解释器时 `Argv` 为空、不查 `PATH`；`Run(ctx, script, RunOptions)` 按 `Builtin` 分派（解释器 / 真实 shell `argv + script`），平台组杀与 `WaitDelay` 都在库内，调用方不必自己抄一遍 vbash 配置 |
-| 行为 | `interactive: true` | **不经解释器**，仍走 `runFull` 借终端（终端所有权属 `ctty`） |
+| 行为 | `interactive: true` | 仍由**解释器执行**，但须先借到终端：pty 平台下借来的 slave 既是解释器 stdio，也是前台子进程的控制终端（`runVbashInteractive`）；借不到即报错，不回落系统 shell |
 | 行为 | 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
 | 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」**并列出不支持的构造**（`case`/`[[ ]]`/反引号/`<<<`/`(( ))`/进程替换/数组/函数内改全局变量/`${V:off:len}`/算术 `n++` 与 `**`/`set -o pipefail`/`$RANDOM`），给出替代写法——不列清单模型只能靠报错试错 |
 
@@ -238,6 +238,12 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
   `vbash` 自身不预设平台策略
 - 错误分流：`SyntaxError` 由解释器按 bash 文案写进 stderr（不再重复进 `Err`）；
   `ExitRequest` 是控制流信号；只有 `UnsupportedError` 与内部错误进 `Result.Err`
+- interactive 分支先看 `profile.Builtin`：内置解释器走 `runVbashInteractive`
+  （`LendFull` 借 pty → slave 作解释器 stdio → 前台子进程再以 slave 作控制终端），
+  真实 shell 仍走 `runFull`。两条路径都**借不到终端即报错**，都不回落
+- 平台侧新增两项能力（`shellPlatform.PtyLend`/`ConfigureTTY`/`TTYEnv`）：posix 声明 `PtyLend` 并实现
+  「只有 stdin 正好是借出设备才设 ctty、其余一律进独立会话」与 `GPG_TTY`/`SSH_TTY` 改指，Windows 为 no-op。
+  独立会话是隔离的关键：`Setpgid` 时代子进程沿用调用方会话，后台命令也能打开 `/dev/tty` 抢终端
 
 前台接入（`tools.Standard` / `tools.Shell` 两种装配方式都一样）：
 

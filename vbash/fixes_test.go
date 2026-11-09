@@ -1,6 +1,9 @@
 package vbash
 
 import (
+	"bufio"
+	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -447,5 +450,128 @@ func TestBrokenPipeKeepsRealWriteErrors(t *testing.T) {
 	out := runScript(t, dir, "exec 3>/dev/null\nexec 3>&-\necho hi >&3")
 	if !strings.Contains(out.stderr, "Bad file descriptor") && !strings.Contains(out.stderr, "write error") {
 		t.Errorf("真实写错误仍应报出，实际 %q", out.stderr)
+	}
+}
+
+// read 内建曾经在读 nil stdin 时 panic：NewRunner 把 cfg.Stdin 原样塞进 IO.In，
+// IO.bufferedInput 用 bufio.NewReader(nil) 包成非 nil 的 *bufio.Reader，
+// readLine 里的 nil 守卫因此失效，ReadString 现场踩空指针。
+// 口径：未注入 Stdin 等同空输入（读即 EOF，等价 /dev/null），不 panic。
+func TestNilStdinIsEmptyInput(t *testing.T) {
+	dir := tempDir(t)
+	cfg := Config{
+		Dir:       dir,
+		Home:      dir,
+		Env:       []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		ShellName: "/bin/bash",
+		// Stdout/Stderr/Stdin 全不注入：既要能跑，也不能 panic
+	}
+	var out, errb strings.Builder
+	cfg.Stdout, cfg.Stderr = &out, &errb
+
+	code, err := RunScript(context.Background(), `read x; echo "got=[$x]"`, cfg)
+	if err != nil {
+		t.Fatalf("nil stdin 下 read 不应返回错误: %v", err)
+	}
+	if code != 0 {
+		t.Errorf("read 遇 EOF 应返回 0（变量置空），实际退出码 %d，stderr %q", code, errb.String())
+	}
+	if want := "got=[]\n"; out.String() != want {
+		t.Errorf("输出为 %q，期望 %q", out.String(), want)
+	}
+}
+
+func TestNilStdinExitCodeMatchesDevNull(t *testing.T) {
+	dir := tempDir(t)
+	base := Config{Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"}, ShellName: "/bin/bash"}
+	var nilOut, nilErr strings.Builder
+	cfgNil := base
+	cfgNil.Stdout, cfgNil.Stderr = &nilOut, &nilErr
+
+	var devOut, devErr strings.Builder
+	cfgDev := base
+	cfgDev.Stdout, cfgDev.Stderr = &devOut, &devErr
+	cfgDev.Stdin = strings.NewReader("")
+
+	for _, src := range []string{
+		`read a; read b; read c; echo done`,
+		`while read -r l; do echo "L:$l"; done; echo eof`,
+		`read -r x; echo "rc=$?"`,
+	} {
+		nilOut.Reset()
+		devOut.Reset()
+		codeNil, errNil := RunScript(context.Background(), src, cfgNil)
+		codeDev, errDev := RunScript(context.Background(), src, cfgDev)
+		if codeNil != codeDev || (errNil == nil) != (errDev == nil) {
+			t.Errorf("%q: nil stdin(%d,%v) 与空 reader(%d,%v) 不一致", src, codeNil, errNil, codeDev, errDev)
+		}
+		if nilOut.String() != devOut.String() {
+			t.Errorf("%q: nil stdin 输出 %q，空 reader 输出 %q", src, nilOut.String(), devOut.String())
+		}
+	}
+}
+
+// Run 与 NewRunner 是另外两条独立入口，nil stdin 同样不能 panic。
+func TestNilStdinOtherEntryPoints(t *testing.T) {
+	dir := tempDir(t)
+	cfg := Config{Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"}, ShellName: "/bin/bash"}
+
+	var out strings.Builder
+	cfg.Stdout = &out
+	res, err := Run(context.Background(), `read x; echo ok`, cfg)
+	if err != nil {
+		t.Fatalf("Run 在 nil stdin 下不应报错: %v", err)
+	}
+	if res.ExitCode != 0 || res.Stdout != "ok\n" {
+		t.Errorf("Run 结果 %+v", res)
+	}
+
+	// NewRunner 这条入口只验不 panic 与退出码：它的输出由 Runner.IO 承载，不收集。
+	r := NewRunner(context.Background(), cfg)
+	list, perr := Parse(`read y; echo ok`)
+	if perr != nil {
+		t.Fatalf("解析失败: %v", perr)
+	}
+	code, err := r.RunList(list)
+	if err != nil || code != 0 {
+		t.Fatalf("NewRunner: code=%d err=%v", code, err)
+	}
+}
+
+// IO 字段对外可见，调用方可能在构造之后把 In 置 nil；input 自身也要挡住。
+func TestInputNilGuard(t *testing.T) {
+	x := &IO{}
+	in := x.input()
+	if in == nil {
+		t.Fatal("input 返回 nil")
+	}
+	if n, err := in.Read(make([]byte, 4)); n != 0 || err != io.EOF {
+		t.Errorf("nil In 应读到 EOF，实际 n=%d err=%v", n, err)
+	}
+
+	// fd 0 原样返回：绝不换成 *bufio.Reader（缓冲区会预读、且让外部命令拿不到 *os.File）。
+	if _, ok := in.(*bufio.Reader); ok {
+		t.Error("input 不得把 fd 0 包成 bufio.Reader")
+	}
+	x.In = strings.NewReader("a\n")
+	if x.input() != x.In {
+		t.Error("已注入的 reader 应原样返回")
+	}
+}
+
+// `read` 不得预读 fd 0 之后的输入：`read x; head -1` 里的 head 要还能读到下一行。
+func TestReadDoesNotConsumeNextCommandInput(t *testing.T) {
+	dir := tempDir(t)
+	cfg := Config{
+		Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		ShellName: "/bin/bash", Stdin: strings.NewReader("first\nsecond\n"),
+	}
+	var out strings.Builder
+	cfg.Stdout, cfg.Stderr = &out, &out
+	if _, err := RunScript(context.Background(), `read -r x; echo "x=$x"; head -1`, cfg); err != nil {
+		t.Fatalf("执行失败: %v", err)
+	}
+	if want := "x=first\nsecond\n"; out.String() != want {
+		t.Errorf("输出 %q，期望 %q（read 预读了后续命令的输入）", out.String(), want)
 	}
 }

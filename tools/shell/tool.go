@@ -125,6 +125,11 @@ func (t *Tool) run(ctx context.Context, req request) *Result {
 		t.console = nullConsole{}
 	}
 	if req.Interactive {
+		if t.profile.Builtin {
+			// 解释器没有可交给宿主 shell 的进程，interactive 也只能由它自己执行：
+			// 借来的 pty slave 既是它的 stdio，也是前台子进程的控制终端。
+			return defaultCwd(t.runVbashInteractive(ctx, req.Command, timeoutSec, dir), explicit)
+		}
 		if res, ok := runFull(ctx, t.console, req.Command, timeoutSec, t.profile, dir); ok {
 			return defaultCwd(res, explicit)
 		}

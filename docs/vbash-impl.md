@@ -13,7 +13,8 @@
 | `tools/shell/tool.go` | `Config.Vbash`（默认关闭）+ `Config.Environ`（外部命令的环境来源）；装配期校验 |
 | `tools/shell/messages.go` | vbash 描述句与两条装配错误文案 |
 | `tools/shell/shell.go` | `streamCapture.seal()`：`finish()` 幂等（放弃等待后迟到写入不再改动结果） |
-| `tools/shell/vbash_test.go` | 18 条用例（内建/展开/外部透传/环境注入/cwd/不支持不回落/语法错误/超时/纯内建死循环/中断/截断/interactive 旁路/装配校验/描述） |
+| `tools/shell/vbash_test.go` | 内建/展开/外部透传/环境注入/cwd/不支持不回落/语法错误/超时/纯内建死循环/中断/截断/装配校验/描述 |
+| `tools/shell/vbash_interactive_linux_test.go` | interactive 的 pty 集成用例（内建 read 可读、外部命令拿到真实 pts 与 `/dev/tty`、`GPG_TTY`/`SSH_TTY`、read 后外部命令不挂、后台命令不拿控制终端、借不到即报错、退出码与超时） |
 | `vbash/runner.go` | `Config.ConfigureCmd`/`CancelCmd` 注入点（进程组与树杀策略留在调用方）、`branch()` 统一派生执行器、`runList` 每项前检查 `Ctx` |
 | `vbash/exec.go` | 外部命令套用 `ConfigureCmd`/`CancelCmd`（含 `WaitDelay`） |
 | `vbash/errors.go` | 位置为零时省略「第 0 行第 0 列」 |
@@ -34,7 +35,10 @@
   ——库不预设平台策略（分层约束），Windows 的 `taskkill /T /F` 因此自动生效。
 - **`Environ` 必须注入**：`vbash` 是纯库，不读 `os.Environ`；装配期缺 `Environ` 直接报错，
   避免外部命令拿到空环境这种静默故障。
-- **interactive 旁路**：`interactive: true` 仍走 `runFull`（终端所有权属 `ctty`），不经解释器。
+- **interactive 由解释器承担**（更正 2026-11-09）：`interactive: true` 走 `runVbashInteractive`，
+  命令仍进 `vbash.RunScript`，只是 stdio 接到 `LendFull` 借来的 pty slave，前台子进程再以它作
+  控制终端。原文写"仍走 `runFull`、不经解释器"，而 `builtinProfile().Path` 为空串，`exec.Command`
+  必然报 `exec: no command`——`shell: vbash` 下的 interactive 因此从未成功过。
 
 ### 与规划的偏差与自定决策
 
