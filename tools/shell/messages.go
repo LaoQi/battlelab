@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	ErrNoLend       = errors.New(agent.MsgErrPrefix + "interactive 不支持（无法借出终端）")
-	ErrNoInvocation = errors.New(agent.MsgErrPrefix + "旁路执行缺少 shell 入口")
+	ErrNoLend          = errors.New(agent.MsgErrPrefix + "interactive 不支持（无法借出终端）")
+	errHostUnavailable = errors.New("会话宿主不可用")
+	ErrNoInvocation    = errors.New(agent.MsgErrPrefix + "旁路执行缺少 shell 入口")
 )
 
 const (

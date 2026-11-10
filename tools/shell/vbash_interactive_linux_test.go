@@ -202,9 +202,10 @@ func TestVbashInteractiveReadThenExternalDoesNotHang(t *testing.T) {
 	}
 }
 
-// 前台命令拿控制终端、后台命令不拿：判据是「子进程的 stdin 正好是借出的设备」。
-// 直接观察效果——后台分支的 fd0 已被换成空读取器，因此打不开 /dev/tty。
-func TestVbashInteractiveBackgroundSkipsTTY(t *testing.T) {
+// 前台与后台命令共用同一个控制终端（与真实 bash 一致）：会话由独立宿主进程
+// 持有，各命令只建自己的进程组。后台命令同样能打开 /dev/tty——
+// bash 里如此，区别只在于它读终端会被 SIGTTIN 停住，而不是打不开。
+func TestVbashInteractiveBackgroundSharesTerminal(t *testing.T) {
 	out := t.TempDir() + "/bg.txt"
 	res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
 		Command: "sh -c '(exec 3</dev/tty) 2>/dev/null && echo fg-ok || echo fg-fail'; " +
@@ -216,8 +217,8 @@ func TestVbashInteractiveBackgroundSkipsTTY(t *testing.T) {
 	if !strings.Contains(got, "fg-ok") {
 		t.Errorf("前台命令应能打开控制终端: %q", got)
 	}
-	if !strings.Contains(got, "bg-fail") {
-		t.Errorf("后台命令不应被赋予控制终端: %q", got)
+	if !strings.Contains(got, "bg-ok") {
+		t.Errorf("后台命令与前台共用同一控制终端，应能打开 /dev/tty: %q", got)
 	}
 }
 
@@ -247,5 +248,29 @@ func TestVbashInteractiveExitCodeAndTimeout(t *testing.T) {
 	})
 	if !res.TimedOut {
 		t.Errorf("应报超时: %+v", res)
+	}
+}
+
+// 回归：stdin 被重定向的前台命令仍须取得控制终端。
+// 旧实现拿「子进程的 stdin 是否正好是借出的 pty slave」当判据，于是
+// `cmd < /dev/null`、`printf x | cmd`、`{ cmd; } < /dev/null` 这类命令被误判成
+// 后台，进了新会话却拿不到 ctty，sudo 报「读取密码需要一个终端」。
+// 现在判据是解释器给出的前台标记，控制终端经额外 fd 交付，与 stdin 形态解耦。
+func TestVbashInteractiveRedirectedStdinKeepsTTY(t *testing.T) {
+	probe := `sh -c '(exec 3</dev/tty) 2>/dev/null && echo devtty-ok || echo devtty-fail'`
+	cases := map[string]string{
+		"plain":     probe,
+		"devnull":   probe + ` < /dev/null`,
+		"left-pipe": `printf x | ` + probe,
+		"brace-sub": `{ ` + probe + `; } < /dev/null`,
+		"subshell":  `( ` + probe + ` ) < /dev/null`,
+	}
+	for name, cmd := range cases {
+		res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
+			Command: cmd, Interactive: true, TimeoutSec: 20,
+		})
+		if out := shellStdout(res); !strings.Contains(out, "devtty-ok") {
+			t.Errorf("%s: stdin 重定向不应影响控制终端: %q", name, out)
+		}
 	}
 }

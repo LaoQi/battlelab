@@ -63,7 +63,7 @@ func (inv Invocation) runArgv(ctx context.Context, script string, o RunOptions) 
 	cmd.Stdin = o.Stdin
 	cmd.Stdout = o.Stdout
 	cmd.Stderr = o.Stderr
-	platform.ConfigureGroup(cmd)
+	platform.ConfigureGroup(cmd, vbash.CmdState{})
 	cmd.Cancel = func() error { return platform.KillGroup(cmd) }
 	cmd.WaitDelay = shellWaitDelay
 	return cmd.Run()

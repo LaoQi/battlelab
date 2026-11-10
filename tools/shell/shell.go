@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 const (
@@ -320,7 +322,7 @@ func runForeground(ctx context.Context, con Console, command string, timeoutSec 
 
 	cmd := exec.CommandContext(runCtx, p.Path, shellArgs(p, command, interactive)...)
 	cmd.Dir = dir
-	platform.ConfigureGroup(cmd)
+	platform.ConfigureGroup(cmd, vbash.CmdState{})
 	cmd.Cancel = func() error { return platform.KillGroup(cmd) }
 	cmd.WaitDelay = shellWaitDelay
 	var stdout, stderr streamCapture

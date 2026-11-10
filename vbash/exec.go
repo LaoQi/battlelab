@@ -159,7 +159,7 @@ func (r *Runner) newCmd(ctx context.Context, full string, argv []string, io *IO)
 	cmd.Stderr = io.Err
 	plat.SetProcessGroup(cmd)
 	if r.ConfigureCmd != nil {
-		r.ConfigureCmd(cmd)
+		r.ConfigureCmd(cmd, CmdState{Background: r.bg, InPipeline: r.inPipe})
 	}
 	if r.CancelCmd != nil {
 		cmd.Cancel = func() error { return r.CancelCmd(cmd) }

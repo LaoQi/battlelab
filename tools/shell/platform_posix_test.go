@@ -42,8 +42,10 @@ func TestPlatformPosixTTYCaps(t *testing.T) {
 	}
 }
 
-// 判定规则：只有 stdin 正好是借出的 pty slave 才设控制终端；
-// 但无论前台还是后台，一律进独立会话（否则子进程能用调用方的终端）。
+// 判定规则：是否授予控制终端由 front 决定，与子进程的 stdin 是什么无关。
+// 回归背景：早先拿「stdin 是否正好是借出设备」当判据，把 `sudo ... < /dev/null`、
+// `cmd | sudo ...` 这类前台命令误判成后台，它们进新会话却拿不到 ctty，
+// sudo 于是报「读取密码需要一个终端」。
 func TestPosixConfigureTTYRule(t *testing.T) {
 	dev, err := os.CreateTemp(t.TempDir(), "fake-pty")
 	if err != nil {
@@ -51,37 +53,50 @@ func TestPosixConfigureTTYRule(t *testing.T) {
 	}
 	defer dev.Close()
 
-	front := &exec.Cmd{Stdin: dev}
-	posixConfigureTTY(front, dev)
-	if front.SysProcAttr == nil || !front.SysProcAttr.Setsid || !front.SysProcAttr.Setctty {
-		t.Errorf("stdin 是借出设备时应取得控制终端: %+v", front.SysProcAttr)
-	}
-	if front.SysProcAttr.Ctty != 0 {
-		t.Errorf("Ctty 应为子进程的 fd 0: %d", front.SysProcAttr.Ctty)
-	}
-	if front.SysProcAttr.Setpgid {
-		t.Error("会话首进程不得再 Setpgid（EPERM）")
-	}
-
-	// 后台/管道/重定向：stdin 不是该设备。
+	// 前台：stdin 可以是任意形态，都必须拿到控制终端，且经额外 fd 指定。
 	for name, stdin := range map[string]io.Reader{
-		"other file": os.Stderr,
-		"pipe":       strings.NewReader(""),
-		"nil":        nil,
+		"stdin=dev":     dev,
+		"stdin=devnull": nil,
+		"stdin=pipe":    strings.NewReader(""),
+		"stdin=file":    os.Stderr,
 	} {
 		cmd := &exec.Cmd{Stdin: stdin}
-		posixConfigureTTY(cmd, dev)
+		posixConfigureTTY(cmd, dev, true)
 		if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
-			t.Errorf("%s: 仍应进独立会话: %+v", name, cmd.SysProcAttr)
+			t.Errorf("%s: 应进独立会话: %+v", name, cmd.SysProcAttr)
 		}
-		if cmd.SysProcAttr.Setctty {
-			t.Errorf("%s: stdin 不是借出设备时不得设控制终端: %+v", name, cmd.SysProcAttr)
+		if !cmd.SysProcAttr.Setctty {
+			t.Errorf("%s: 前台命令必须取得控制终端（与 stdin 形态无关）: %+v", name, cmd.SysProcAttr)
 		}
+		if cmd.SysProcAttr.Setpgid {
+			t.Errorf("%s: 会话首进程不得再 Setpgid（EPERM）", name)
+		}
+		// 控制终端必须指向真的被放进 ExtraFiles 的那个设备。
+		want := ttyCttyFd + len(cmd.ExtraFiles) - 1
+		if len(cmd.ExtraFiles) == 0 || cmd.ExtraFiles[len(cmd.ExtraFiles)-1] != dev {
+			t.Errorf("%s: 借出设备应经 ExtraFiles 交给子进程: %v", name, cmd.ExtraFiles)
+		}
+		if cmd.SysProcAttr.Ctty != want {
+			t.Errorf("%s: Ctty 应指向 dev 的额外 fd %d，实际 %d", name, want, cmd.SysProcAttr.Ctty)
+		}
+	}
+
+	// 后台/管道中间段：仍进独立会话，但不授予控制终端。
+	cmd := &exec.Cmd{Stdin: dev}
+	posixConfigureTTY(cmd, dev, false)
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Errorf("后台命令仍应进独立会话: %+v", cmd.SysProcAttr)
+	}
+	if cmd.SysProcAttr.Setctty {
+		t.Errorf("后台命令不得取得控制终端: %+v", cmd.SysProcAttr)
+	}
+	if len(cmd.ExtraFiles) != 0 {
+		t.Errorf("后台命令不应携带额外 fd: %v", cmd.ExtraFiles)
 	}
 
 	// 借出设备为 nil（无 pty 平台调用）时退化成「新会话、无终端」。
 	plain := &exec.Cmd{Stdin: dev}
-	posixConfigureTTY(plain, nil)
+	posixConfigureTTY(plain, nil, true)
 	if plain.SysProcAttr == nil || !plain.SysProcAttr.Setsid || plain.SysProcAttr.Setctty {
 		t.Errorf("无设备时应仅进新会话: %+v", plain.SysProcAttr)
 	}

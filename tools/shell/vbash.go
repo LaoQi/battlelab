@@ -107,11 +107,23 @@ func (t *Tool) runVbashInteractive(ctx context.Context, command string, timeoutS
 		Fence:     t.fence,
 	}
 	if platform.PtyLend && dev != nil {
-		// pty 一台设备同时承载三路，输出由泵转给 RealTTY 并写入 capture；前台子进程拿到 ctty。
+		// pty 一台设备同时承载三路，输出由泵转给 RealTTY 并写入 capture。
 		cfg.Stdin, cfg.Stdout, cfg.Stderr = dev, dev, dev
 		cfg.Env = platform.TTYEnv(cfg.Env, dev)
-		// 外部命令一律进独立会话（隔离掉调用方终端），前台那个再另行取得控制终端。
-		cfg.ConfigureCmd = func(cmd *exec.Cmd) { platform.ConfigureTTY(cmd, dev) }
+		// 外部命令交给**独立会话宿主**执行：宿主是会话首进程、持有这台 pts，
+		// 各命令只建新进程组并按需设为前台组。于是任意多条命令（含并发存活的
+		// 管道各段）共享同一个控制终端，sudo/gpg/ssh 在管道任意位置都能应答；
+		// 也让 sudo 的按 tty 凭据缓存只生效一次。
+		//
+		// 不能让解释器自己 setsid（会脱离 REPL 的终端），也不能让每条命令各自
+		// setsid（一个 pts 同时只属于一个会话，管道各段会互相抢而 EPERM）。
+		host, herr := startSessionHost(dev)
+		if herr != nil {
+			return &Result{Command: command, Err: ErrNoLend.Error()}
+		}
+		defer host.close()
+		cfg.Handler = hostExecHandler(host, dev, dir, cfg.Env)
+		cfg.ConfigureCmd = platform.ConfigureGroup
 	} else {
 		// 非 pty 平台（Windows 的 CONIN$ 直通）：只有 stdin 是终端，输出仍走结果管道。
 		cfg.Stdout, cfg.Stderr = &capture, &capture

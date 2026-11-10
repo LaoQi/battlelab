@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"runtime"
 	"testing"
+
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 func TestPlatformComplete(t *testing.T) {
@@ -43,7 +45,7 @@ func TestFillDefaults(t *testing.T) {
 		t.Error("默认不假定 LendFull 借出的是 pty")
 	}
 	cmd := &exec.Cmd{}
-	p.ConfigureGroup(cmd)
+	p.ConfigureGroup(cmd, vbash.CmdState{})
 	if cmd.SysProcAttr != nil {
 		t.Errorf("默认进程组配置应为 no-op: %+v", cmd.SysProcAttr)
 	}
@@ -63,7 +65,7 @@ func TestFillDefaults(t *testing.T) {
 
 	// 默认的 TTY 能力是 no-op：不动 SysProcAttr、不改环境。
 	ttyCmd := &exec.Cmd{}
-	p.ConfigureTTY(ttyCmd, nil)
+	p.ConfigureTTY(ttyCmd, nil, true)
 	if ttyCmd.SysProcAttr != nil {
 		t.Errorf("默认控制终端配置应为 no-op: %+v", ttyCmd.SysProcAttr)
 	}

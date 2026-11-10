@@ -125,6 +125,8 @@ func (r *Runner) startAsync(cmd *Command, io *IO, pos Pos) (int, bool) {
 		bgIO.In = emptyReader()
 	}
 	sub := r.branch(env, bgIO)
+	// 这是 `&` 起的后台作业：标记下去，让 ConfigureCmd 知道不该授予终端。
+	sub.bg = true
 	execCmd := sub.newCmd(backgroundCtx(r.Ctx), full, argv, bgIO)
 	execCmd.Cancel = nil
 	execCmd.WaitDelay = 0

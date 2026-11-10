@@ -6,12 +6,14 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+
+	"github.com/LaoQi/battlelab/vbash"
 )
 
 type shellPlatform struct {
 	GOOS           string
 	Candidates     []string
-	ConfigureGroup func(*exec.Cmd)
+	ConfigureGroup func(*exec.Cmd, vbash.CmdState)
 	KillGroup      func(*exec.Cmd) error
 	ProtectSignals func()
 	ExitCode       func(error) (int, bool)
@@ -23,9 +25,9 @@ type shellPlatform struct {
 	// 并充当控制终端。为 false 时（Windows 的 CONIN$ 直通）只有 stdin 可用，
 	// 输出仍走工具结果管道。
 	PtyLend bool
-	// ConfigureTTY 把借出的终端设备设为子进程的控制终端——仅当该子进程的 stdin
-	// 正是这个设备时生效（后台、管道、重定向命令一律跳过）。
-	ConfigureTTY func(*exec.Cmd, *os.File)
+	// ConfigureTTY 把借出的终端设备设为子进程的控制终端，由 front 决定是否授予：
+	// 前台命令一律授予（与其 stdin 是否被重定向无关），后台命令只进独立会话。
+	ConfigureTTY func(*exec.Cmd, *os.File, bool)
 	// TTYEnv 把 GPG_TTY/SSH_TTY 等变量指向借出的设备（非 pty 平台为 no-op）。
 	TTYEnv func([]string, *os.File) []string
 }
@@ -65,13 +67,13 @@ func fillDefaults(p shellPlatform) shellPlatform {
 	return p
 }
 
-func noopConfigureTTY(*exec.Cmd, *os.File) {}
+func noopConfigureTTY(*exec.Cmd, *os.File, bool) {}
 
 func identityTTYEnv(env []string, _ *os.File) []string { return env }
 
 func identityOutput(b []byte) string { return string(b) }
 
-func noopConfigureGroup(*exec.Cmd) {}
+func noopConfigureGroup(*exec.Cmd, vbash.CmdState) {}
 
 func noopProtectSignals() {}
 

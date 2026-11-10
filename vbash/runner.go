@@ -19,13 +19,14 @@ type Runner struct {
 	Verbose   bool
 	Exec      Handler
 
-	ConfigureCmd func(*exec.Cmd)
+	ConfigureCmd func(*exec.Cmd, CmdState)
 	CancelCmd    func(*exec.Cmd) error
 
 	expn          *expansion
 	jobs          *jobTable
 	fence         *Fence
 	bg            bool
+	inPipe        bool
 	ErrExit       bool
 	warnedFd      bool
 	subStatus     int
@@ -37,6 +38,20 @@ type Runner struct {
 	PipeFail      bool
 	XTrace        bool
 }
+
+// CmdState 描述一条外部命令相对终端的处境，随 ConfigureCmd 一起交给实现方。
+// 由解释器判定（它才知道这条命令是前台作业还是后台作业），
+// 调用方不必（也无法）从子进程的 fd 反推。
+type CmdState struct {
+	// Background 报告该命令是 & 起的后台作业。
+	Background bool
+	// InPipeline 报告该命令是管道的非末尾段（stdout 已被接到下一段）。
+	InPipeline bool
+}
+
+// Background 报告当前 runner 是否处在 `&` 起的后台作业里。
+// Handler 实现用它决定是否让命令取得终端。
+func (r *Runner) Background() bool { return r.bg }
 
 type Handler func(ctx context.Context, r *Runner, argv []string, io *IO) (int, error)
 
@@ -74,7 +89,7 @@ type Config struct {
 	Stdin        io.Reader
 	ShellName    string
 	Handler      Handler
-	ConfigureCmd func(*exec.Cmd)
+	ConfigureCmd func(*exec.Cmd, CmdState)
 	CancelCmd    func(*exec.Cmd) error
 	Fence        *Fence
 }
@@ -158,6 +173,7 @@ func (r *Runner) branch(env *Env, io *IO) *Runner {
 		CancelCmd:    r.CancelCmd,
 		fence:        r.fence,
 		bg:           r.bg,
+		inPipe:       r.inPipe,
 	}
 	sub.expn = &expansion{env: env, runs: sub, io: io}
 	sub.funcDepth = r.funcDepth
@@ -270,6 +286,8 @@ func (r *Runner) runPipeline(pl *Pipeline, io *IO) (int, error) {
 	for i, cmd := range pl.Commands {
 		last := i == len(pl.Commands)-1
 		branch := r.branch(base.Clone(), io)
+		// 非末尾段处在管道中间：只有末尾段才是「面对终端」的前台命令。
+		branch.inPipe = !last
 		childIO := io.clone()
 		childIO.In = in
 		consumed := pending
