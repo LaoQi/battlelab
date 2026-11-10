@@ -19,7 +19,7 @@ func runNest(t *testing.T, src string) (int, error) {
 	cfg := Config{
 		Dir:       dir,
 		Home:      dir,
-		Env:       []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		Env:       []string{testPath},
 		Stdout:    &out,
 		Stderr:    &errb,
 		Stdin:     strings.NewReader(""),

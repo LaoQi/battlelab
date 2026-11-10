@@ -90,7 +90,7 @@ func TestVbashPwdDefaultCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := testVbashTool(t).run(context.Background(), request{Command: "pwd", TimeoutSec: 10})
-	if got := strings.TrimSpace(shellStdout(res)); got != cwd {
+	if got := normShellPath(strings.TrimSpace(shellStdout(res))); got != normShellPath(cwd) {
 		t.Errorf("默认目录应为进程 cwd: got %q want %q", got, cwd)
 	}
 }
@@ -98,7 +98,7 @@ func TestVbashPwdDefaultCwd(t *testing.T) {
 func TestVbashExplicitCwd(t *testing.T) {
 	dir := t.TempDir()
 	res := testVbashTool(t).run(context.Background(), request{Command: "pwd", Cwd: dir, TimeoutSec: 10})
-	if got := strings.TrimSpace(shellStdout(res)); got != dir {
+	if got := normShellPath(strings.TrimSpace(shellStdout(res))); got != normShellPath(dir) {
 		t.Errorf("cwd 参数应生效: got %q want %q", got, dir)
 	}
 }
@@ -230,7 +230,7 @@ func TestVbashDescriptionMentionsInterpreter(t *testing.T) {
 	if !strings.Contains(testVbashTool(t).toolDesc(), "内置 bash 解释器") {
 		t.Error("启用 vbash 时描述应说明解释器")
 	}
-	if strings.Contains(testShellTool(t).toolDesc(), "内置 bash 解释器") {
+	if strings.Contains(testShellTool(t, func(c *Config) { c.Override = "" }).toolDesc(), "内置 bash 解释器") {
 		t.Error("未启用时描述不应提及解释器")
 	}
 }

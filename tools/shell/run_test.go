@@ -51,7 +51,7 @@ func TestRunBuiltinUsesDirAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, dir) {
+	if !strings.Contains(normShellPath(got), normShellPath(dir)) {
 		t.Errorf("cwd 未生效: %q", got)
 	}
 	if !strings.Contains(got, "ok") {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -73,9 +74,11 @@ func (f *fakeConsole) LendFull(cmd *exec.Cmd, capture io.Writer) (Lease, error) 
 	return &fakeLease{stdin: w, readEnd: r, onDone: done, owner: f}, nil
 }
 
+// consoleTool 构造**宿主 shell + 注入终端**的工具：借出终端的桥接路径
+// （LendFull/runFull）只属于宿主 shell，内建解释器走 runVbashInteractive。
 func consoleTool(t *testing.T, c Console) *Tool {
 	t.Helper()
-	return testShellTool(t, func(cfg *Config) { cfg.Console = c })
+	return hostShellTool(t, func(cfg *Config) { cfg.Console = c })
 }
 
 func TestRunShellFullCapture(t *testing.T) {
@@ -132,7 +135,7 @@ func TestRunShellNonInteractiveSkipsFull(t *testing.T) {
 }
 
 func TestRunShellNoConsoleInjectedErrors(t *testing.T) {
-	res := testShellTool(t).run(context.Background(), request{Command: "echo plain", TimeoutSec: 10, Interactive: true})
+	res := hostShellTool(t).run(context.Background(), request{Command: "echo plain", TimeoutSec: 10, Interactive: true})
 	if !strings.Contains(res.Err, "interactive 不支持") {
 		t.Fatalf("无终端借出能力应报错: %+v", res)
 	}
@@ -156,7 +159,11 @@ func TestRunShellNonInteractiveLendsStdin(t *testing.T) {
 }
 
 func TestRunShellSignaledExitCode(t *testing.T) {
-	res := testShellTool(t).run(context.Background(), request{Command: "kill -INT $$", TimeoutSec: 10})
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX 信号语义用例")
+	}
+	// $$ 与信号语义都属宿主 shell：解释器里 $$ 是测试进程自身，kill 会被 guardedPid 拦下。
+	res := hostShellTool(t).run(context.Background(), request{Command: "kill -INT $$", TimeoutSec: 10})
 	if res.ExitCode != 130 {
 		t.Fatalf("SIGINT 应记为 130: %+v", res)
 	}
@@ -166,6 +173,9 @@ func TestRunShellSignaledExitCode(t *testing.T) {
 }
 
 func TestRunShellFullSignaledExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX 信号语义用例")
+	}
 	res := consoleTool(t, &fakeConsole{}).run(context.Background(), request{Command: "kill -INT $$", TimeoutSec: 10, Interactive: true})
 	if res.ExitCode != 130 {
 		t.Fatalf("桥接路径 SIGINT 应记为 130: %+v", res)

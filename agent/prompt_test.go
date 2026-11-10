@@ -7,6 +7,9 @@ import (
 )
 
 func TestPromptBuilderInjectedRead(t *testing.T) {
+	if !posixPathSemantics {
+		t.Skip("POSIX 路径语义用例")
+	}
 	ws := "/fake/ws"
 	global := "/fake/home/.config/agent/AGENTS.md"
 	files := map[string]string{
@@ -66,6 +69,9 @@ func TestPromptBuilderNormalizesBase(t *testing.T) {
 }
 
 func TestPromptBuilderEmptyBaseSections(t *testing.T) {
+	if !posixPathSemantics {
+		t.Skip("POSIX 路径语义用例")
+	}
 	ws := "/fake/ws"
 	global := "/fake/home/.config/agent/AGENTS.md"
 	files := map[string]string{
@@ -87,6 +93,9 @@ func TestPromptBuilderEmptyBaseSections(t *testing.T) {
 }
 
 func TestPromptBuilderCustomGlobalPath(t *testing.T) {
+	if !posixPathSemantics {
+		t.Skip("POSIX 路径语义用例")
+	}
 	ws := "/fake/ws"
 	home := "/home/u"
 	global := filepath.Join(home, ".config", "ivan", "AGENTS.md")

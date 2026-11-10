@@ -45,7 +45,7 @@ func TestRunShellCwdDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := testShellTool(t).run(context.Background(), request{Command: "pwd", TimeoutSec: 10})
-	if got := strings.TrimSpace(shellStdout(res)); got != cwd {
+	if got := normShellPath(evalDirTrim(t, shellStdout(res))); got != normShellPath(evalDirTrim(t, cwd)) {
 		t.Errorf("默认目录应为进程 cwd: got %q want %q", got, cwd)
 	}
 	if res.Cwd != "" {
@@ -63,9 +63,10 @@ func TestRunShellCwdEffective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(shellStdout(res)))
-	if err != nil || got != want {
-		t.Fatalf("cwd 未生效: got %q (%v) want %q; res=%+v", got, err, want, res)
+	// 保留符号链接归一（macOS 上 /var 与 /private/var 是同一目录），再按平台归一形态比较。
+	got := normShellPath(evalDirTrim(t, shellStdout(res)))
+	if got != normShellPath(evalDirTrim(t, want)) {
+		t.Fatalf("cwd 未生效: got %q want %q; res=%+v", got, want, res)
 	}
 	if res.Cwd != dir {
 		t.Errorf("Cwd 字段: got %q want %q", res.Cwd, dir)
@@ -84,9 +85,9 @@ func TestRunShellCwdRelative(t *testing.T) {
 	if res.Cwd != cwd {
 		t.Errorf("相对路径应按会话启动目录解析: got %q want %q", res.Cwd, cwd)
 	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(shellStdout(res)))
-	if err != nil || got != cwd {
-		t.Errorf("执行目录: got %q (%v) want %q", got, err, cwd)
+	got := normShellPath(evalDirTrim(t, shellStdout(res)))
+	if got != normShellPath(evalDirTrim(t, cwd)) {
+		t.Errorf("执行目录: got %q want %q", got, cwd)
 	}
 }
 
@@ -141,9 +142,9 @@ func TestRunShellCwdRelativeToWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := filepath.EvalSymlinks(strings.TrimSpace(shellStdout(res)))
-	if err != nil || got != want {
-		t.Fatalf("命令未在工作区子目录执行: got %q (%v) want %q; res=%+v", got, err, want, res)
+	got := normShellPath(evalDirTrim(t, shellStdout(res)))
+	if got != normShellPath(evalDirTrim(t, want)) {
+		t.Fatalf("命令未在工作区子目录执行: got %q want %q; res=%+v", got, want, res)
 	}
 }
 
@@ -172,13 +173,13 @@ func TestWorkspaceConsultedPerInvoke(t *testing.T) {
 	tool := testShellTool(t, func(c *Config) { c.Workspace = func() string { return ws } })
 	pwd := func() string {
 		res := tool.run(context.Background(), request{Command: "pwd", TimeoutSec: 10})
-		return evalDirTrim(t, shellStdout(res))
+		return normShellPath(evalDirTrim(t, shellStdout(res)))
 	}
-	if got, want := pwd(), evalDirTrim(t, first); got != want {
+	if got, want := pwd(), normShellPath(evalDirTrim(t, first)); got != want {
 		t.Fatalf("默认目录应取当时的工作区: got %q want %q", got, want)
 	}
 	ws = second
-	if got, want := pwd(), evalDirTrim(t, second); got != want {
+	if got, want := pwd(), normShellPath(evalDirTrim(t, second)); got != want {
 		t.Fatalf("工作区变化后默认目录应跟随: got %q want %q", got, want)
 	}
 }

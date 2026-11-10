@@ -12,7 +12,7 @@ func shortPath(p string) string {
 			return "~"
 		}
 		if strings.HasPrefix(p, home+string(filepath.Separator)) {
-			return "~" + p[len(home):]
+			return "~" + filepath.ToSlash(p[len(home):])
 		}
 	}
 	return p

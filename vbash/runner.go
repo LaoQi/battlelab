@@ -587,9 +587,12 @@ func readFileSubstitution(body string) (string, bool) {
 }
 
 func (r *Runner) readFileInto(name string) (string, error) {
+	// 绝对路径一律走内部→宿主转换：Windows 上内部形式 /d/work/a.txt 不是合法宿主路径。
+	// 没有工作目录（Dir 为空）时相对路径仍按进程 cwd 解析——与 glob 的既有约定一致，
+	// 也保留「Dir 为空即用调用方 cwd」的旧语义。
 	path := name
-	if !strings.HasPrefix(path, "/") && r.Env.Dir() != "" {
-		path = strings.TrimSuffix(r.Env.Dir(), "/") + "/" + path
+	if r.Env.Dir() != "" || strings.HasPrefix(plat.FromHost(name), "/") {
+		path = r.hostPath(name)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

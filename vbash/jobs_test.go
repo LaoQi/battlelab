@@ -36,7 +36,7 @@ func runJobs(t *testing.T, dir, src string, fence *Fence, timeout time.Duration)
 	cfg := Config{
 		Dir:       dir,
 		Home:      dir,
-		Env:       []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		Env:       []string{testPath},
 		Stdout:    &out,
 		Stderr:    &errb,
 		Stdin:     strings.NewReader(""),

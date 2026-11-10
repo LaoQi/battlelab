@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +25,7 @@ func testShellTool(t *testing.T, mutate ...func(*Config)) *Tool {
 	if err != nil || home == "" {
 		t.Fatalf("UserHomeDir 不可用: err=%v home=%q", err, home)
 	}
-	cfg := Config{LookPath: exec.LookPath, Home: home, Workspace: func() string { return cwd }}
+	cfg := Config{Override: BuiltinShellName, Environ: os.Environ, LookPath: exec.LookPath, Home: home, Workspace: func() string { return cwd }}
 	for _, f := range mutate {
 		f(&cfg)
 	}
@@ -35,13 +36,22 @@ func testShellTool(t *testing.T, mutate ...func(*Config)) *Tool {
 	return tool
 }
 
+// hostShellTool 构造走**宿主 shell** 的工具。桥接（runFull）与前台（runForeground）
+// 两条路径只在 profile 非内建时才存在：解释器（vbash）的 interactive 走的是
+// runVbashInteractive，与借出终端的桥接语义不同。用例要测桥接就必须显式要宿主 shell。
+func hostShellTool(t *testing.T, mutate ...func(*Config)) *Tool {
+	t.Helper()
+	opts := append([]func(*Config){func(c *Config) { c.Override = "" }}, mutate...)
+	return testShellTool(t, opts...)
+}
+
 func runShellString(t *testing.T, ctx context.Context, command string, timeoutSec int) string {
 	t.Helper()
 	return testShellTool(t).run(ctx, request{Command: command, TimeoutSec: timeoutSec}).String()
 }
 
 func TestNewShellToolResolvesProfileAndPrograms(t *testing.T) {
-	tool, err := New(Config{LookPath: lookPathStub("bash", "ls")})
+	tool, err := New(Config{Override: "bash", LookPath: lookPathStub("bash", "ls")})
 	if err != nil || tool.profile == nil || tool.profile.Name != "bash" {
 		t.Fatalf("New: %+v err=%v", tool, err)
 	}
@@ -55,6 +65,7 @@ func TestNewShellToolResolvesProfileAndPrograms(t *testing.T) {
 
 func TestNewShellToolInjectedPrograms(t *testing.T) {
 	tool, err := New(Config{
+		Override: "bash",
 		LookPath: lookPathStub("bash", "ls", "grep"),
 		Programs: []string{"ls"},
 	})
@@ -121,7 +132,11 @@ func TestShellToolResolveCwdNoBaseline(t *testing.T) {
 	if got, err := tool.resolveCwd("~"); err == nil || got != "" {
 		t.Errorf("无家目录时 ~ 应报错: got %q, %v", got, err)
 	}
-	if got, err := tool.resolveCwd("/tmp"); err != nil || got != "/tmp" {
+	abs := string(filepath.Separator) + "tmp"
+	if runtime.GOOS == "windows" {
+		abs = filepath.Join(os.Getenv("SystemRoot"), "Temp")
+	}
+	if got, err := tool.resolveCwd(abs); err != nil || got != abs {
 		t.Errorf("绝对路径不依赖注入值: got %q, %v", got, err)
 	}
 }
@@ -172,7 +187,7 @@ func TestNewShellToolEmptyPrograms(t *testing.T) {
 		}
 		return "", errors.New("not found")
 	}
-	tool, err := New(Config{LookPath: lookPath, Programs: []string{}})
+	tool, err := New(Config{Override: "bash", LookPath: lookPath, Programs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

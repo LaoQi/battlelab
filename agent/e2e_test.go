@@ -121,7 +121,7 @@ func TestAskUsageReal(t *testing.T) {
 func TestAskRequestCallbacks(t *testing.T) {
 	m := newMockLLM(t,
 		mockStep{toolCalls: []mockToolCall{{id: "call_1", name: "calc", args: `{"expression":"1+1"}`}}},
-		mockStep{content: "2", usage: &Usage{PromptTokens: 1200, CompletionTokens: 5, TotalTokens: 1205}},
+		mockStep{content: "2", usage: &Usage{PromptTokens: 1200, CompletionTokens: 5, TotalTokens: 1205}, hold: 2 * time.Millisecond},
 	)
 	a := newAgent(t, m)
 	var starts int

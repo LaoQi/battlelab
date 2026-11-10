@@ -1,3 +1,56 @@
+## 2026-11-10 fix: Windows 下 `go test ./...` 全绿（含 3 处真缺陷与 1 处测试污染）
+
+Windows 上跑全量测试有 58 项失败（其中 1 处 panic 会打断整个包）。逐项归因后分三类处理：
+真缺陷修实现、测试假设错就按平台分片、该跳过就加门禁。**没有为迁就 Windows 放宽实现语义**
+（`d > 0` 没有改成 `d >= 0`、0600 断言没有被删掉）。
+
+真缺陷（用户可见）：
+
+- **`$(<file)` 在 Windows 上一律返回空串**（`vbash/runner.go`）：原实现直接拿内部 POSIX 形式
+  （`/d/work/a.txt`）当宿主路径去 `os.ReadFile`，Windows 上必然 `ENOENT`。改为绝对路径走
+  `hostPath` 转换；同时保住「`Dir` 为空时相对路径按进程 cwd 解析」的旧语义（与 `glob` 一致），
+  新增 `TestReadFileSubstitutionNoWorkDir` 守住这条边界。
+- **`shortPath` / `globalLabel` 混用分隔符**（`agent/path.go`、`agent/prompt.go`）：前缀是 `~`
+  或 `~/`、后缀却是原样的 `\`，于是 system prompt 里出现 `~/.config\agent\AGENTS.md` 这种
+  半截归一的路径。补 `filepath.ToSlash`。
+
+测试污染（比"测试失败"更严重）：
+
+- **`agent` 的用例会写真实家目录**：环境隔离只设了 `HOME`，而 Windows 的 `os.UserHomeDir()`
+  读的是 `USERPROFILE`。`TestSystemPromptAgents` 因此真的往 `C:\Users\<user>\.config\agent\AGENTS.md`
+  写文件，且该文件随后被其它用例读到，造成用例间互相污染。按仓库既有的平台白名单约定新增
+  `agent/testhome_{posix,windows,stub}_test.go` 提供 `setTestHome`，在 `isolateProcessEnv`、
+  `isolatePromptEnv` 两处接线。`AGENTS.md` 里「用例不得依赖真实 HOME」的约定此前在 Windows 上
+  **从未真正生效**。
+
+测试侧按根因批量修（不改实现语义）：
+
+- **行尾**：新增 `.gitattributes`（`* text=auto eol=lf`）。`core.autocrlf=true` 时检出为 CRLF，
+  会让嵌入文本与快照类断言失配
+- **`PATH` 写死 POSIX**（27 条 + 1 panic）：7 处 `runScript`/用例把 `PATH=/usr/local/bin:/usr/bin:/bin`
+  写死，Windows 上找不到 `cat`/`ls`/`head`/`sh`，全部 127；`TestRunCDChangesDir` 因 `lines[1]`
+  越界 panic，把该包后续用例全打断。新增 `vbash/testpath_{posix,windows,stub}_test.go` 提供平台
+  感知的 `testPath`（Windows 继承宿主 `PATH`）
+- **shell 探测与路径形态**（`tools/shell`）：新增 `normpath_{posix,windows,stub}_test.go` 的
+  `normShellPath`，把 `pwd` 输出的 `/c/Users/...` 与宿主 `C:\Users\...` 归一到同一形态再比较
+  （只用于比较，不改实现输出）；「候选探测」类用例显式给 `Override: "bash"`，不再依赖平台候选表。
+  **`testShellTool` 默认仍走宿主 shell**：桥接路径（`LendFull`/`runFull`）只属于宿主 shell，
+  要测它的用例用新增的 `hostShellTool` 显式声明
+- **加平台门禁**（该跳过就跳过）：`TestRunningPathNotExecutable`、`TestLookPathSkipsDirectory`
+  （POSIX 执行位 / PATH 语义）、`TestPromptBuilderInjectedRead` 等 3 条（用 `/fake/home` 这类
+  POSIX 假路径，走 `posixPathSemantics` 常量）、`TestRefCompletionSpaceNames` 的 `"` 文件名
+  （Windows 保留字符）
+- **时钟精度**：`TestAskRequestCallbacks` 断言 `Duration > 0`，Windows 毫秒级 mock 可能测出 0，
+  给该步骤加 `hold: 2 * time.Millisecond`
+- **路径分隔符断言**：`tools/tools_test.go` 新增 `tailPath` 剥掉 `C:` / `/c` 前缀后比较
+- **`os.Chdir` → `t.Chdir`**（`agent/agent_test.go`）：`os.Chdir` 配 `t.Cleanup` 会因 LIFO 顺序
+  「先删 cwd 再切回」而失败（Windows 上目录被占用即报错），`t.Chdir` 自动按正确顺序注册清理
+- **性能断言**：`TestBraceUnmatchedOpenLinear` 在 Windows 上因计时粒度粗误判 O(n²)，改为预热 +
+  放大规模（20k/200k）+ 100µs 下限
+
+验收：Windows 上 `GOWORK=off go build/vet/test ./...` 全绿、`gofmt -l` 干净；Linux 与 macOS
+（`GOOS=darwin`）交叉编译与全量测试同样全绿（含 `-race`）。
+
 ## 2026-11-10 feat(tools/shell)!: interactive 命令改由独立会话宿主执行
 
 一个 pts 同一时刻只能属于一个会话。此前每条外部命令各自 `setsid`+`TIOCSCTTY` 去抢同一个借出的

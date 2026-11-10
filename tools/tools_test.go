@@ -84,6 +84,16 @@ func evalDir(t *testing.T, p string) string {
 	return p
 }
 
+func tailPath(p string) string {
+	p = strings.ToLower(filepath.ToSlash(p))
+	if len(p) > 2 && p[1] == ':' {
+		p = p[2:]
+	} else if len(p) > 2 && p[0] == '/' && p[2] == '/' {
+		p = p[2:]
+	}
+	return p
+}
+
 func TestStandardToolsFollowWorkspace(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("当前环境无 bash: %v", err)
@@ -91,9 +101,11 @@ func TestStandardToolsFollowWorkspace(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	var ag *agent.Agent
 	list, err := Standard(Options{
-		Home:      home,
-		Workspace: func() string { return ag.Workspace() },
-		LookPath:  exec.LookPath,
+		ShellOverride: shell.BuiltinShellName,
+		Home:          home,
+		Workspace:     func() string { return ag.Workspace() },
+		LookPath:      exec.LookPath,
+		Environ:       os.Environ,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +130,7 @@ func TestStandardToolsFollowWorkspace(t *testing.T) {
 	for _, c := range sh.Stdout {
 		out.WriteString(c.Data)
 	}
-	if got, want := evalDir(t, strings.TrimSpace(out.String())), evalDir(t, target); got != want {
+	if got, want := tailPath(evalDir(t, strings.TrimSpace(out.String()))), tailPath(evalDir(t, target)); got != want {
 		t.Errorf("run_shell 默认目录应跟随 /switch 后的工作区: got %q want %q", got, want)
 	}
 }

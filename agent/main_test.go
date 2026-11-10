@@ -35,6 +35,9 @@ func isolateProcessEnv(prefix string) (func(), error) {
 	if err := os.Setenv("HOME", home); err != nil {
 		return nil, err
 	}
+	if err := setTestHome(home); err != nil {
+		return nil, err
+	}
 	if err := os.Chdir(wd); err != nil {
 		return nil, err
 	}

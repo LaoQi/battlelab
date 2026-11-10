@@ -462,7 +462,7 @@ func TestNilStdinIsEmptyInput(t *testing.T) {
 	cfg := Config{
 		Dir:       dir,
 		Home:      dir,
-		Env:       []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		Env:       []string{testPath},
 		ShellName: "/bin/bash",
 		// Stdout/Stderr/Stdin 全不注入：既要能跑，也不能 panic
 	}
@@ -483,7 +483,7 @@ func TestNilStdinIsEmptyInput(t *testing.T) {
 
 func TestNilStdinExitCodeMatchesDevNull(t *testing.T) {
 	dir := tempDir(t)
-	base := Config{Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"}, ShellName: "/bin/bash"}
+	base := Config{Dir: dir, Home: dir, Env: []string{testPath}, ShellName: "/bin/bash"}
 	var nilOut, nilErr strings.Builder
 	cfgNil := base
 	cfgNil.Stdout, cfgNil.Stderr = &nilOut, &nilErr
@@ -514,7 +514,7 @@ func TestNilStdinExitCodeMatchesDevNull(t *testing.T) {
 // Run 与 NewRunner 是另外两条独立入口，nil stdin 同样不能 panic。
 func TestNilStdinOtherEntryPoints(t *testing.T) {
 	dir := tempDir(t)
-	cfg := Config{Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"}, ShellName: "/bin/bash"}
+	cfg := Config{Dir: dir, Home: dir, Env: []string{testPath}, ShellName: "/bin/bash"}
 
 	var out strings.Builder
 	cfg.Stdout = &out
@@ -563,7 +563,7 @@ func TestInputNilGuard(t *testing.T) {
 func TestReadDoesNotConsumeNextCommandInput(t *testing.T) {
 	dir := tempDir(t)
 	cfg := Config{
-		Dir: dir, Home: dir, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		Dir: dir, Home: dir, Env: []string{testPath},
 		ShellName: "/bin/bash", Stdin: strings.NewReader("first\nsecond\n"),
 	}
 	var out strings.Builder

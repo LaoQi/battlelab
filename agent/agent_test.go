@@ -11,16 +11,10 @@ func isolatePromptEnv(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	old, err := os.Getwd()
-	if err != nil {
+	if err := setTestHome(tmp); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(old)
-	})
+	t.Chdir(tmp)
 }
 
 const testBasePrompt = "BASE"

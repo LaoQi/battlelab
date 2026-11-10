@@ -20,7 +20,7 @@ func runScript(t *testing.T, dir, src string, args ...string) runOut {
 	cfg := Config{
 		Dir:       dir,
 		Home:      dir,
-		Env:       []string{"PATH=/usr/local/bin:/usr/bin:/bin"},
+		Env:       []string{testPath},
 		Args:      args,
 		Stdout:    &out,
 		Stderr:    &errb,

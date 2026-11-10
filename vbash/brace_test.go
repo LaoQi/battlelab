@@ -181,10 +181,11 @@ func TestBraceUnmatchedOpenLinear(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	small := elapsed(2000)
-	large := elapsed(20000)
-	if small < time.Microsecond {
-		small = time.Microsecond
+	_ = elapsed(2000)
+	small := elapsed(20000)
+	large := elapsed(200000)
+	if small < 100*time.Microsecond {
+		small = 100 * time.Microsecond
 	}
 	if factor := float64(large) / float64(small); factor > 60 {
 		t.Errorf("规模增长 10 倍耗时增长 %.1f 倍（%v → %v），疑似退化为 O(n²)", factor, small, large)

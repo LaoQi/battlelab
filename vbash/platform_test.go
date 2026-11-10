@@ -3,6 +3,7 @@ package vbash
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -60,6 +61,9 @@ func TestRunningPathMissingExitCode(t *testing.T) {
 }
 
 func TestRunningPathNotExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX 执行位与 PATH 语义用例")
+	}
 	dir := tempDir(t)
 	plain := filepath.Join(dir, "plain.txt")
 	if err := os.WriteFile(plain, []byte("x"), 0o644); err != nil {
@@ -72,6 +76,9 @@ func TestRunningPathNotExecutable(t *testing.T) {
 }
 
 func TestLookPathSkipsDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX 执行位与 PATH 语义用例")
+	}
 	dir := tempDir(t)
 	bin := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {

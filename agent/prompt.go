@@ -65,7 +65,7 @@ func (p *promptBuilder) legacyPrompt() bool { return p.legacy }
 
 func (p *promptBuilder) globalLabel() string {
 	if p.home != "" && strings.HasPrefix(p.globalPath, p.home+string(filepath.Separator)) {
-		return "~/" + strings.TrimPrefix(p.globalPath, p.home+string(filepath.Separator))
+		return "~/" + filepath.ToSlash(strings.TrimPrefix(p.globalPath, p.home+string(filepath.Separator)))
 	}
 	return p.globalPath
 }
