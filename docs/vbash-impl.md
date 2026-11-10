@@ -10,19 +10,20 @@
 | 文件 | 内容 |
 |---|---|
 | `tools/shell/vbash.go` | `Tool.runVbash`：进程内跑 `vbash.RunScript`，复用 `streamCapture`/`waitBounded`/超时与中断语义 |
-| `tools/shell/tool.go` | `Config.Vbash`（默认关闭）+ `Config.Environ`（外部命令的环境来源）；装配期校验 |
+| `tools/shell/tool.go` | `Config.Override: "vbash"`（开关就是 `shell` 取值）+ `Config.Environ`（外部命令的环境来源）；装配期校验 |
 | `tools/shell/messages.go` | vbash 描述句与两条装配错误文案 |
 | `tools/shell/shell.go` | `streamCapture.seal()`：`finish()` 幂等（放弃等待后迟到写入不再改动结果） |
 | `tools/shell/vbash_test.go` | 内建/展开/外部透传/环境注入/cwd/不支持不回落/语法错误/超时/纯内建死循环/中断/截断/装配校验/描述 |
-| `tools/shell/vbash_interactive_linux_test.go` | interactive 的 pty 集成用例（内建 read 可读、外部命令拿到真实 pts 与 `/dev/tty`、`GPG_TTY`/`SSH_TTY`、read 后外部命令不挂、后台命令不拿控制终端、借不到即报错、退出码与超时） |
+| `tools/shell/vbash_interactive_linux_test.go` | interactive 的 pty 集成用例（内建 read 可读、外部命令拿到真实 pts 与 `/dev/tty`、`GPG_TTY`/`SSH_TTY`、read 后外部命令不挂、后台作业与前台共用控制终端、stdin 重定向仍拿终端、借不到即报错、退出码与超时） |
 | `vbash/runner.go` | `Config.ConfigureCmd`/`CancelCmd` 注入点（进程组与树杀策略留在调用方）、`branch()` 统一派生执行器、`runList` 每项前检查 `Ctx` |
 | `vbash/exec.go` | 外部命令套用 `ConfigureCmd`/`CancelCmd`（含 `WaitDelay`） |
 | `vbash/errors.go` | 位置为零时省略「第 0 行第 0 列」 |
 
 ### 实现要点
 
-- **默认关闭，显式开启**：`Config.Vbash` 为 `false` 时执行路径与旧版完全一致（`bash -c`），
-  开关为实验特性背书（规划 §9 风险对策）。
+- **开关就是 `shell` 取值**（2026-11-09 改口径，取代原「`Config.Vbash` 默认关闭」）：写 `Override: "vbash"`
+  （前台配置为 `shell: vbash`）即走进程内解释器，写 `bash`/空（按平台探测）仍是真实 shell 子进程。
+  `Config.Vbash` 字段与 `tools.Options.Vbash` 均已删除。
 - **不回落**（D9）：`vbash` 报 `UnsupportedError`/`SyntaxError` 时直接进 `Result.Err` 或 stderr，
   绝不改走宿主 shell；`TestVbashUnsupportedDoesNotFallBack` 断言 `case` 语句既不执行也无输出。
 - **错误分流**：`SyntaxError` 已由解释器按 bash 文案写进 stderr（基准逐字节要求），不再重复写 `Err`；
@@ -46,7 +47,7 @@
 |---|---|---|---|
 | S8-1 | 规划 §6 把 `ConfigureGroup`/`KillGroup` 视为现成能力直接沿用 | `vbash.Config` 新增 `ConfigureCmd`/`CancelCmd` 钩子，由 `tools/shell` 注入 | `vbash` 是纯库不能 import `tools/shell`；把策略做成钩子既守住分层，也让 Windows 树杀自动生效 |
 | S8-2 | 规划未提解释器内部的取消检查 | `runList` 每项前检查 `Ctx`，并在展开/管道派生处补 `branch()` 传播钩子 | 纯内建死循环不开子进程，没有取消点就只能靠外层放弃等待（会白等满宽限期） |
-| S8-3 | 规划要求「配置开关（默认关闭）」但未定开关失败语义 | 非 POSIX shell（pwsh/cmd）下开启 `Vbash` 在 `New` 期报错 | 解释器只实现 bash 语法，在 pwsh 上开启必然是错的；装配期拒绝比运行期每条命令报错清楚 |
+| S8-3 | 规划要求「配置开关（默认关闭）」但未定开关失败语义 | 非 POSIX 宿主 shell（pwsh/cmd）下启用内置解释器在 `New` 期报错 | 解释器只实现 bash 语法；装配期拒绝比运行期每条命令报错清楚。（2026-11-09 `338a9e3` 后此项作废：非 POSIX 宿主上写 `vbash` 是 Windows 的目标场景，已允许，见 `TestVbashIgnoresHostShell`） |
 | S8-4 | `vbash` 原先的 `UnsupportedError`/`SyntaxError` 文案总会带「第 0 行第 0 列」 | 位置为零时省略位置段 | 解析期错误多半没有精确位置；`Err` 行会直接进模型视野，不能带着假位置 |
 | S8-5 | `streamCapture.finish()` 原先非幂等 | 加 `sealed` 标记，写入与收尾在放弃等待后失效 | 超时放弃后迟到的写入不该改动已交付结果（`-race` 下也是数据竞争源） |
 

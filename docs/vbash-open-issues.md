@@ -198,7 +198,8 @@
 
 | 项 | 说明 |
 |---|---|
-| ~~tanya 尚未接线~~ | **已接线**（2026-11-06）：tanya 侧新增 `vbash` 配置项（yaml/env `TANYA_VBASH`）并**默认开启**，`main` 把 `Vbash`/`Environ: os.Environ` 透传给 `tools.Standard`。同轮闭合的解析缺陷见下方 §3.3 |
+| ~~tanya 尚未接线~~ | **已接线**（2026-11-06，2026-11-09 改口径）：tanya 侧把 `shell` 配置项取值写 `vbash`（yaml `shell:` / env `TANYA_SHELL`，默认 `vbash`）并透传 `Environ: os.Environ` 给 `tools.Standard`；原独立的 `vbash`/`TANYA_VBASH` 开关已随 `338a9e3` 取消。同轮闭合的解析缺陷见下方 §3.3 |
+| `interactive` 需宿主自举 | **已接线**（2026-11-10）：`interactive: true` 的外部命令由会话宿主进程承载，调用方二进制须在入口调 `shell.RunSessionHostIfRequested()`；tanya 的 `main` 与 `integration` 的 `TestMain` 均已接，漏接则 `interactive` 一律报 `无法借出终端`。见 `docs/shell-tool.md` §17.1 |
 | `describeVbash` 未真机验证 | 仅在非 POSIX 宿主（pwsh/cmd）生效，`make cross` 只保证编译。Windows 侧属「实现完成、待验证」 |
 
 ## 6 已闭合：调用方真实试用暴露的 13 项（2026-11-06）

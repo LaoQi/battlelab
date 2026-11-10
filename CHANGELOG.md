@@ -1,3 +1,57 @@
+## 2026-11-10 feat(tools/shell)!: interactive 命令改由独立会话宿主执行
+
+一个 pts 同一时刻只能属于一个会话。此前每条外部命令各自 `setsid`+`TIOCSCTTY` 去抢同一个借出的
+pts，管道各段并发存活时第二段会拿到 `EPERM`，表现为 fork/exec 直接失败（`echo x | cat | cat`
+报 `Permission denied`）；同时又用「子进程 stdin 是否正好是借出的 pty slave」当授不授终端的判据，
+把 `sudo ... < /dev/null`、`cmd | sudo ...` 这类显式重定向 stdin 的前台命令误判成后台，它们进了
+新会话却没有控制终端，sudo 于是报「读取密码需要一个终端；请使用 -S 选项…」。
+
+改成真实 bash 的模型：**会话只建立一次，命令只建自己的进程组**。
+
+- **会话宿主进程**（`tools/shell/sessionhost_linux.go`）：借出终端时用**当前可执行文件**起一个
+  `setsid`+`TIOCSCTTY` 的会话首进程，由它持有这台 pts 并 fork 各条命令；命令按需 `tcsetpgrp`
+  设为前台组，退出后把前台组收回宿主。于是任意多条命令（含并发存活的管道各段）共享同一个控制终端，
+  `sudo`/`gpg`/`ssh` 在管道任意位置都能与用户应答，`sudo` 的按 tty 凭据缓存也只生效一次。
+  解释器自己不能 `setsid`（会脱离 REPL 的终端），而让每条命令各自 `setsid` 正是本节要修的病。
+- **宿主自举**：调用方二进制必须在入口调用 `shell.RunSessionHostIfRequested()`（tanya 已接，
+  测试经 `TestMain` 接线）；宿主进循环前回一个就绪字节，未接自举的宿主在 2s 内**明确失败**
+  （`会话宿主不可用`，表现为 `interactive` 报 `无法借出终端`）而不是挂死。
+- **宿主协议走纯字节流帧**，stdio 只传 **fd 编号**（宿主经 `/proc/<ppid>/fd/<n>` 打开），
+  避开 `SCM_RIGHTS` 的附着语义与帧边界纠缠；内存形态的 stdio（`< /dev/null` 的空读取器、
+  heredoc 的字符串读取器、捕获 buffer）由父进程建临时管道桥接。
+- **取消路径改走宿主**：命令跑在宿主里，父进程手里没有它的 `*exec.Cmd`，`CancelCmd` 那条路走不通。
+  宿主启动命令后先回报 pgid，父进程超时/中断时按组 `SIGCONT`+`SIGKILL`（先 CONT 唤醒可能被
+  `SIGTTIN`/`SIGTTOU` 停住的组）。
+- **`ctty` 新增会话原语**（`session_posix.go`）：`BecomeSessionLeader`/`SetControllingTTY`/
+  `SetForeground`/`ForegroundGroup`/`IgnoreTTOU`。宿主 `setsid` 后必须 `IgnoreTTOU`，
+  否则它自己做 `tcsetpgrp` 会被停住。
+- **判据改为调用方给出的前台标记**：`shellPlatform.ConfigureTTY` 增 `front` 参数，控制终端经
+  **额外 fd**（子进程 `fd 3`，`SysProcAttr.Ctty` 指向它）交付，与 stdin 形态彻底解耦——
+  `cmd < /dev/null`、`a | cmd` 这类前台命令照样拿得到终端；后台命令只进独立会话、不授终端。
+- **`vbash` 侧新增 `CmdState{Background, InPipeline}`** 随 `ConfigureCmd` 传递：终端处境由解释器
+  判定（它才知道这条命令是不是 `&` 起的后台作业），调用方不必也无法从 fd 反推。同轮修掉
+  `startAsync` 未标记后台作业的缺陷（`&` 起的作业被当成前台去抢终端）。
+- **`ConfigureGroup` 一并带 `CmdState`**：`platform.ConfigureGroup`/`noopConfigureGroup` 的签名
+  随之改为 `func(*exec.Cmd, vbash.CmdState)`。
+
+测试：`tools/shell/vbash_interactive_linux_test.go` 新增
+`TestVbashInteractiveRedirectedStdinKeepsTTY`（`< /dev/null`、`printf x | cmd`、`{ cmd; } < /dev/null`、
+`( cmd ) < /dev/null` 五种形态都须拿到 `/dev/tty`）；原 `TestVbashInteractiveBackgroundSkipsTTY`
+改名 `TestVbashInteractiveBackgroundSharesTerminal` 并反转断言——后台命令**同样**能打开 `/dev/tty`
+（与真实 bash 一致，区别只在于读终端会被 `SIGTTIN` 停住）；`platform_posix_test.go` 的
+`TestPosixConfigureTTYRule` 改为断言「前台一律授终端、与 stdin 形态无关」与「Ctty 指向 ExtraFiles
+末尾那个设备」；新增 `tools/shell/main_linux_test.go` 的 `TestMain` 接线。实机：管道首/中/末段与
+stdio 重定向下 `sudo` 均能取终端，多段并发管道不再报 `Permission denied`（见 tanya 同日的
+`integration/vbash_e2e_test.go`）。
+
+文档同步：`docs/shell-tool.md` §17、`docs/vbash-capability.md` §3.6、`docs/vbash-impl.md`；
+顺带校正 `AGENTS.md` 与 `docs/vbash-impl.md` 中「`Config.Vbash` 默认关闭」的过时表述
+（该字段已于 2026-11-09 `338a9e3` 删除，开关就是 `shell` 配置项的取值）。
+
+BREAKING CHANGE: `ConfigureTTY` 增加 `front` 参数；`ConfigureCmd`/`ConfigureGroup` 的签名增加
+`vbash.CmdState`；`interactive` 命令的进程树改由独立会话宿主承载，**宿主二进制必须在入口调用
+`shell.RunSessionHostIfRequested()`**，否则 `interactive` 一律失败。
+
 ## 2026-11-09 fix(vbash): interactive 改由解释器自己拿终端，不再报 `exec: no command`
 
 `shell: vbash` 下 `interactive: true` 必定失败：`builtinProfile()` 的 `Path` 是空串，

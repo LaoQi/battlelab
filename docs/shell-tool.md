@@ -223,7 +223,7 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 | 判断入口 | `shell.IsBuiltin(name)` | 供调用方判断某个配置值是否指向内置解释器（大小写与首尾空白不敏感），如决定是否接线进程围栏 |
 | 宿主 shell | — | 与宿主实际装了什么无关：`pwsh`/`cmd` 宿主的 Windows 上写 `shell: vbash` 同样生效（跨平台归一正是目标），命令仍按 bash 写法；描述走 `describeVbash` |
 | 旁路执行 | `shell.Resolve("vbash")` + `Invocation.Run` | `Invocation` 增 `Builtin`：内置解释器时 `Argv` 为空、不查 `PATH`；`Run(ctx, script, RunOptions)` 按 `Builtin` 分派（解释器 / 真实 shell `argv + script`），平台组杀与 `WaitDelay` 都在库内，调用方不必自己抄一遍 vbash 配置 |
-| 行为 | `interactive: true` | 仍由**解释器执行**，但须先借到终端：pty 平台下借来的 slave 既是解释器 stdio，也是前台子进程的控制终端（`runVbashInteractive`）；借不到即报错，不回落系统 shell |
+| 行为 | `interactive: true` | 仍由**解释器执行**，但须先借到终端：pty 平台下借来的 slave 作解释器 stdio，外部命令交由**独立会话宿主**承载（宿主是会话首进程、持有这台 pts，见下）；借不到终端或宿主不可用即报错，不回落系统 shell |
 | 行为 | 失败语义 | 不支持的构造/语法错误**直接报错，不回落宿主 shell**（`docs/vbash-plan.md` D9） |
 | 行为 | 描述 | 开启时 `toolDesc()` 前置一句「命令由内置 bash 解释器执行（实验特性…）」**并列出不支持的构造**（`case`/`[[ ]]`/反引号/`<<<`/`(( ))`/进程替换/数组/函数内改全局变量/`${V:off:len}`/算术 `n++` 与 `**`/`set -o pipefail`/`$RANDOM`），给出替代写法——不列清单模型只能靠报错试错 |
 
@@ -239,11 +239,45 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 - 错误分流：`SyntaxError` 由解释器按 bash 文案写进 stderr（不再重复进 `Err`）；
   `ExitRequest` 是控制流信号；只有 `UnsupportedError` 与内部错误进 `Result.Err`
 - interactive 分支先看 `profile.Builtin`：内置解释器走 `runVbashInteractive`
-  （`LendFull` 借 pty → slave 作解释器 stdio → 前台子进程再以 slave 作控制终端），
-  真实 shell 仍走 `runFull`。两条路径都**借不到终端即报错**，都不回落
-- 平台侧新增两项能力（`shellPlatform.PtyLend`/`ConfigureTTY`/`TTYEnv`）：posix 声明 `PtyLend` 并实现
-  「只有 stdin 正好是借出设备才设 ctty、其余一律进独立会话」与 `GPG_TTY`/`SSH_TTY` 改指，Windows 为 no-op。
-  独立会话是隔离的关键：`Setpgid` 时代子进程沿用调用方会话，后台命令也能打开 `/dev/tty` 抢终端
+  （`LendFull` 借 pty → slave 作解释器 stdio → 外部命令交会话宿主执行），真实 shell 仍走
+  `runFull`。两条路径都**借不到终端即报错**，都不回落
+- 平台侧三项能力（`shellPlatform.PtyLend`/`ConfigureTTY`/`TTYEnv`）：posix 声明 `PtyLend` 并实现
+  「按调用方给的前台标记授控制终端、控制终端经额外 fd 交付」与 `GPG_TTY`/`SSH_TTY` 改指，
+  Windows 为 no-op
+
+#### 17.1 会话宿主（2026-11-10）
+
+一个 pts 同一时刻只能属于一个会话。此前每条外部命令各自 `setsid`+`TIOCSCTTY` 抢同一个借出的 pts，
+管道各段并发存活时第二段拿到 `EPERM`，表现为 fork/exec 直接失败（`echo x | cat | cat` 报
+`Permission denied`）；而「子进程 stdin 是否正好是借出的 slave」这个授终端判据，又把
+`sudo ... < /dev/null`、`cmd | sudo ...` 这类显式重定向 stdin 的前台命令误判成后台。
+
+现按真实 bash 的模型改：**会话只建立一次，命令只建自己的进程组**。
+
+| 角色 | 谁 | 做什么 |
+|---|---|---|
+| 调用方进程 | tanya（入口调 `shell.RunSessionHostIfRequested()`） | 借出 pty，接一根 socketpair，起宿主进程 |
+| 会话宿主 | 同一可执行文件自举（`setsid`+`TIOCSCTTY`） | 持有这台 pts、是会话首进程；逐条 fork 命令、`tcsetpgrp` 管前台组 |
+| 解释器 | 调用方进程内（`vbash.RunScript`） | 只做语法与内建，外部命令经 `vbash.Config.Handler` 交给宿主 |
+
+要点：
+
+- **自举与就绪握手**：宿主经环境变量置位后走 `runSessionHost`，进循环前回一个就绪字节；
+  未接自举的可执行文件在 2s 内**明确失败**（`会话宿主不可用` → `interactive` 报
+  `无法借出终端`），不挂死。库自身的测试二进制经 `TestMain` 接线。
+- **协议是纯字节流帧**，stdio 只传 **fd 编号**（宿主经 `/proc/<ppid>/fd/<n>` 打开同一个描述符），
+  不用 `SCM_RIGHTS`——那要求 fd 与数据严格配对，帧边界一错位就静默挂死。内存形态的 stdio
+  （`< /dev/null` 的空读取器、heredoc 字符串、捕获 buffer）由父进程建临时管道桥接。
+- **取消走宿主**：命令跑在宿主里，父进程没有它的 `*exec.Cmd`，`CancelCmd` 那条路走不通；
+  宿主启动后先回报 pgid，父进程超时/中断时按组 `SIGCONT`+`SIGKILL`（先 CONT 唤醒可能被
+  `SIGTTIN`/`SIGTTOU` 停住的组）。
+- **前台标记来自解释器**：`vbash.CmdState{Background, InPipeline}` 随 `ConfigureCmd` 传下——
+  只有解释器知道这条命令是不是 `&` 起的作业。`ConfigureTTY` 相应增 `front` 参数，控制终端经
+  额外 fd（子进程 `fd 3`）交付、`Ctty` 指向它，于是 `cmd < /dev/null`、`a | cmd` 照样拿得到终端。
+- **`ctty` 新增会话原语**：`BecomeSessionLeader`/`SetControllingTTY`/`SetForeground`/
+  `ForegroundGroup`/`IgnoreTTOU`。宿主 `setsid` 后必须 `IgnoreTTOU`，否则自己做 `tcsetpgrp` 会被停住。
+- **后台作业仍能打开 `/dev/tty`**（与真实 bash 一致）：差别的表现是读终端会被 `SIGTTIN` 停住，
+  而不是打不开。`TestVbashInteractiveBackgroundSharesTerminal` 锁的就是这条。
 
 前台接入（`tools.Standard` / `tools.Shell` 两种装配方式都一样）：
 
@@ -260,3 +294,17 @@ list, err := tools.Standard(tools.Options{
 
 用例见 `tools/shell/vbash_test.go` 与 `tools/tools_test.go`（经 `ShellOverride` 能开启、
 缺 `Environ` 装配期报错、未指定时不走解释器）；解释器侧语义与基准见 `docs/vbash-impl.md` 的 S8 节。
+
+**宿主自举是调用方的硬接线**（2026-11-10 起）：`interactive` 的外部命令由「当前可执行文件」自举的
+会话宿主承载，因此调用方二进制必须在入口第一步调用 `shell.RunSessionHostIfRequested()`——
+被自举时它直接进入宿主循环、不返回：
+
+```go
+func main() {
+	shell.RunSessionHostIfRequested() // 必须在任何业务逻辑、flag 解析、信号接线之前
+	...
+}
+```
+
+漏接的症状是 `interactive` 一律失败（`interactive 不支持（无法借出终端）`），普通命令不受影响；
+宿主侧有 2s 就绪超时，不会静默挂死。不在 Linux 上时该函数是 no-op（`sessionhost_stub.go`）。

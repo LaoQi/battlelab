@@ -41,7 +41,7 @@ tool, err := shell.New(shell.Config{
 | `Override: "vbash"` | 进程内解释器，**不查 `PATH`**、不要求磁盘上存在该文件 |
 | 判断入口 | `shell.IsBuiltin(name)`：供调用方判断某取值是否指向内置解释器（大小写/首尾空白不敏感） |
 | 宿主为 pwsh / cmd | 与宿主无关：写 `vbash` 即生效，命令仍按 bash 语法书写（Windows 上的目标场景） |
-| `interactive: true` | 仍由**解释器执行**，但必须先借到终端：借来的 pty 同时充当解释器的 stdin/stdout/stderr 与前台子进程的控制终端（见 §3.6） |
+| `interactive: true` | 仍由**解释器执行**，但必须先借到终端：借来的 pty 作解释器 stdio，外部命令交**独立会话宿主**承载（宿主持有该 pts 并管前台组，见 §3.6） |
 | 旁路执行（通知等） | 同样进解释器：`shell.Resolve` 给出 `Invocation{Builtin: true}`，`Run` 不回落系统 shell |
 
 ## 3 能力矩阵
@@ -183,16 +183,25 @@ shell 函数调用深度上限 `maxFuncDepth = 512`，超限打
 
 | 平台 | 借出的终端 | 解释器 stdio | 外部命令能否拿控制终端 |
 |---|---|---|---|
-| Linux | pty（`LendFull` 走 pty 泵） | stdin/stdout/stderr 全是 pty slave，输出实时上屏并进工具结果 | 能：前台子进程以该 slave 为控制终端 |
+| Linux | pty（`LendFull` 走 pty 泵） | stdin/stdout/stderr 全是 pty slave，输出实时上屏并进工具结果 | 能：外部命令由**独立会话宿主**承载，宿主是会话首进程、持有这台 pts，各命令只建自己的进程组 |
 | macOS | 同 Linux | 同上 | 同上（`make cross` 仅保证编译通过，未真机验证） |
 | Windows | `CONIN$` 直通 | 只有 stdin 是终端，输出仍走结果管道 | 无 `/dev/tty` 概念 |
 
-关键语义：
+关键语义（2026-11-10 改口径：会话只建立一次，命令只建自己的进程组）：
 
-- **控制终端只给前台命令**：判据是「子进程的 stdin 正好是借出的 pty slave」。后台命令（fd0 已被解释器
-  换成空读取器）、管道段、带重定向的命令都不满足，因此拿不到控制终端。
-- **外部命令一律进独立会话**：否则它们继承调用方（REPL）的会话与控制终端，后台命令也能打开
-  `/dev/tty` 抢走终端。入新会话且不设控制终端时 `/dev/tty` 直接打不开（`ENXIO`）。
+- **会话宿主**：借出 pty 后，调用方用**当前可执行文件**自举一个 `setsid`+`TIOCSCTTY` 的会话首进程，
+  由它持有这台 pts 并 fork 每条外部命令、按需 `tcsetpgrp` 管前台组。解释器自己不能 `setsid`
+  （会脱离 REPL 的终端），而让每条命令各自 `setsid` 会让并发存活的管道各段互相抢一个 pts
+  （第二段 `EPERM`，表现为 `echo x | cat | cat` 报 `Permission denied`）。调用方二进制因此必须在入口
+  调用 `shell.RunSessionHostIfRequested()`，漏接即 `interactive` 一律失败。
+- **前台标记由解释器给出**：`vbash.CmdState{Background, InPipeline}` 随 `ConfigureCmd` 传递给实现方，
+  控制终端经**额外 fd**（子进程 `fd 3`，`Ctty` 指向它）交付。判据因此与「子进程 stdin 是什么」彻底
+  解耦——早先拿 stdin 形态当判据，把 `sudo ... < /dev/null`、`cmd | sudo ...` 这类显式重定向 stdin
+  的前台命令误判成后台，它们进新会话却拿不到 ctty，`sudo` 报「读取密码需要一个终端」。
+- **后台作业同样能打开 `/dev/tty`**：这是真实 bash 的行为，差别的表现是读终端会被 `SIGTTIN` 停住，
+  而不是打不开（`TestVbashInteractiveBackgroundSharesTerminal`）。
+- **内存形态的 stdio 由父进程桥接**：`< /dev/null` 的空读取器、heredoc 字符串、捕获 buffer 都不是
+  fd，父进程建临时管道搬运——宿主协议只认 fd 编号（经 `/proc/<ppid>/fd/<n>` 打开）。
 - **`GPG_TTY`/`SSH_TTY` 指向借出的设备**：gpg、ssh 否则会去问 agent 要终端或读到一个已失效的旧值。
 - **借不到终端即报错**（`interactive 不支持（无法借出终端）`），既不回落系统 shell，也不静默降级成
   无终端执行——后者会让 `sudo`/`ssh` 挂起或读空。

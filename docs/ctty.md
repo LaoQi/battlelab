@@ -8,6 +8,8 @@
 >
 > 更正（2026-09-25）：`run_shell` 已从 `agent` 外置到 `tools/shell`（`agent` 本身零内部依赖、不再引用本包）——下文凡指 run_shell 一侧的 `agent`/`agent/shell*.go`，现均指 `tools/shell`（文件名 `platform*.go`/`bridge.go`）；原语与策略的划分不变。
 
+> **会话原语回归（2026-11-10）**：`BecomeSessionLeader`/`SetControllingTTY`/`SetForeground`/`ForegroundGroup`/`IgnoreTTOU` 是本包新增的一组**会话**原语，服务对象只有 `tools/shell` 的会话宿主进程（`interactive` 的外部命令由它持有 pts 并管前台组，见 `docs/shell-tool.md` §17.1）。它与 2026-09-27 删除的那组「前台组原语」不是同一件事：那组是**终端策略层**（tanya 的 REPL 自己移交前台），已随「tanya 恒前台」作废且不回归；这组只被独立宿主进程消费，策略仍在 `tools/shell`。
+>
 > 控制台层**已实施**（2026-09-26 立项，2026-09-27 S1–S7 完工）：终端持有者、命名模式与 `^C` 归属收敛为三层（消费者 / Console 仲裁 / device 设备面；唯一持有者 + 借出分型 + 事件归一），见 tanya 的 `docs/terminal-console.md`。两项裁决均已落地：**前台组原语（`OwnPgrp`/`ForegroundPgrp`/`SetForeground`/`IsForeground`）与 `run_shell` 的 tty 直通整体删除**（普通命令 stdin = `/dev/null`、不再移交前台，`sudo`/`ssh` 需显式 `interactive: true`），`InputModes`/`SnapshotInput`/`RestoreInput` 随旧租约一并删除；**不做 `^Z` 子进程挂起检测**（`ProtectJobSignals` 的 SIGTSTP 吞没保留）。此后本文件只描述原语：位组合与终端策略收在 `readline` 内，不再新增模式常量。
 
 `agent` 与 `readline` 各自实现同一组"控制终端（controlling tty）原语"：
@@ -66,6 +68,11 @@
 | `ResetModes(tty *os.File) bool` | 复位终端模式：SGR、字符集（`SI` + G0/G1 回 ASCII）、显示光标、自动换行、origin 模式、普通方向键、鼠标上报、bracketed paste、focus 上报、退出备用屏、复位滚动区。顺序固定为「属性类复位（SGR/字符集/模式）→ `\x1b[?1049l` → `\x1b[r`」；这两条都会动光标（`DECRST 1049` 即使在主屏也按 DECRC 恢复保存槽、`CSI r`/DECSTBM 把光标 home），故**调用方必须先 `SaveCursor`、复位后 `RestoreCursor` 收尾**，串内不得自带 `DECSC`/`DECRC`（会覆盖调用方的存档槽）。2026-09-16 二次修订，取代此前「把会移光标的两条包在 `DECSC`…`DECRC` 内」的做法——实测证明自包只能保住「已被子进程打乱」的位置；**2026-10-10 三次修订**：归还终端前调用方要**再 `SaveCursor` 一次**（见下表两行），把归位点从「借出前」换成「子进程留下的位置」 |
 | `SaveCursor(tty *os.File) bool` | 写 `DECSC`（`\x1b7`）：交出终端前存光标锚点（2026-09-16 增补）；归还终端时**再调一次**，把归位点改写为子进程留下的位置——子进程输出推进/滚屏后，`DECSC` 存的绝对行号已指向别的内容，不重存就会让调用方从错误位置续写、覆盖子进程刚显示的输出（2026-10-10 增补，见 tanya 的 `docs/cursor-anchor-follow.md`）|
 | `RestoreCursor(tty *os.File) bool` | 写 `DECRC`（`\x1b8`）：`ResetModes` 之后归位到**最后一次 `SaveCursor`** 的位置（2026-09-16 增补）|
+| `BecomeSessionLeader(dev *os.File) error` | 让当前进程成为新会话首进程（`setsid`）并把 `dev` 设为它的控制终端。**只给独立会话宿主进程用**——调用后本进程脱离原会话（也就脱离调用方的控制终端），不能在 REPL/服务器进程里直接调。2026-11-10 增补，消费者是 `tools/shell` 的会话宿主 |
+| `SetControllingTTY(dev *os.File) error` | 把已打开的终端设备设为当前会话的控制终端（`TIOCSCTTY`），`BecomeSessionLeader` 的第二半 |
+| `SetForeground(dev *os.File, pid int) error` | 把 `pid` 所在的进程组设为 `dev` 上的前台组（`TIOCSPGRP`）。非前台组读终端会被 `SIGTTIN` 停住、写会被 `SIGTTOU` 停住，所以宿主启动一条面对终端的命令后必须调它、命令退出后再收回自己。2026-11-10 增补（此前「前台组原语」整体删除过一次，这次是**新用途**：只由会话宿主持有，不回流 terminal 策略层） |
+| `ForegroundGroup(dev *os.File) (int, error)` | 读 `dev` 上的前台进程组（`TIOCGPGRP`） |
+| `IgnoreTTOU()` | 让进程忽略 `SIGTTOU`：宿主在后台进程组里做 `tcsetpgrp` 时默认会被停住，必须屏蔽才能可靠管理前台组 |
 | `Bell() error` | 往控制终端写一声 BEL：posix `/dev/tty`、windows `CONOUT$`、其余平台恒错。注意力提示音用，失败由调用方静默忽略（2026-09-21 增补）|
 | `NotifyOSC(text string) error` | 往控制终端写一帧 `ESC ] 9 ; text BEL`（帧拼接由纯函数 `oscFrame` 负责）：通道同 `Bell()`，`text` 须由调用方预处理成单行无控制序列。终端原生通知用，尽力而为、失败静默（2026-09-21 增补）|
 
@@ -101,6 +108,9 @@
 | `ctty/signals_windows.go` | `windows` | 信号清单（SIGTERM/`os.Interrupt`）+ `emergencyRestore` = `RestoreUTF8`（2026-09-17 拆出）|
 | `ctty/signals_stub.go` | `!linux && !darwin && !windows` | 信号清单（SIGTERM/`os.Interrupt`）+ `emergencyRestore` no-op |
 | `ctty/privilege_posix.go` | `linux \|\| darwin` | `IsRoot()`：`os.Geteuid() == 0`（启动 root 门禁，见 tanya 的 `docs/design.md`《启动安全检查》）|
+| `ctty/session_posix.go` | `linux \|\| darwin` | 会话原语：`BecomeSessionLeader`/`SetControllingTTY`/`SetForeground`/`ForegroundGroup`/`IgnoreTTOU`（2026-11-10 增补，唯一消费者是 `tools/shell` 的会话宿主）|
+| `ctty/session_signal_posix.go` | `linux \|\| darwin` | `signalIgnoreTTOU()`（`signal.Ignore(SIGTTOU)`）|
+| `ctty/session_stub.go` / `ctty/session_signal_stub.go` | `!linux && !darwin` | 会话原语恒错 / `IgnoreTTOU` no-op（`make cross` 拦漏标）|
 | `ctty/privilege_stub.go` | `!linux && !darwin` | `IsRoot()` 恒 false（含 windows：无 uid 语义，不做管理员检查）|
 
 ## 运行期信号（2026-09-17）
