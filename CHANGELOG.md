@@ -1,3 +1,25 @@
+## 2026-11-13 fix(ctty): `FallbackCP()` 改跟随控制台当前码页
+
+Windows 上 `run_shell` 的中文输出会随机变成乱码（`中文` → `涓枃`，带私有区字符
+`\ue15f`/`\ue17b`），且同一段合法 UTF-8 时好时坏。根因在解码侧：`FallbackCP()` 返回的是
+「自己改码页前的原值」而非控制台**当前**码页。`EnsureUTF8()` 只在需要改时才存原值，
+本来就 65001 的控制台（Windows Terminal / conpty 的常见形态）什么都不做、快照保持 0，
+于是 `FallbackCP()` 落到 `OEMCP()`（936），`tools/shell` 拿它去 `DecodeCP`，
+把合法 UTF-8 字节按 GBK 解。这也解释了「时好时坏」：936 控制台（`conhost`）下反而正常。
+
+- **改法**：`FallbackCP()` 先读 `ConsoleOutputCP()`并返回；读不到（无控制台）才回落
+  启动快照的原值，再回落 `OEMCP()`。两个语义分开——「还原用码页」（`utf8OrigOut`，
+  只在 `RestoreUTF8` 里用）与「解码用码页」（子进程此刻写出的字节按控制台当前码页生成）。
+- **影响面**：唯一调用点是 `tools/shell/platform_windows.go` 的 `windowsDecodeOutput`，
+  语义收窄到解码，不触碰 `RestoreUTF8` 的还原路径；posix 侧 stub 恒 0 不变。
+- **测试**：`TestFallbackCPFollowsConsoleOutputCP`（返回值恒等于 `ConsoleOutputCP()`）、
+  `TestFallbackCPAfterEnsureUTF8`（`EnsureUTF8` 后为 65001、`RestoreUTF8` 后回到原值）；
+  无控制台环境（`go test` 无 tty）自动跳过。`make cross` 覆盖 windows 编译与 vet。
+
+**未覆盖（另行处理）**：`toUTF8()` 仍是整块 `utf8.Valid` 判定（一块混入非法字节会让其中
+合法 UTF-8 陪葬）、`streamCapture` 按字节在 `MaxOutput` 截断会切断多字节字符。
+本条目只修「解码目标码页选错」这一层，上述两条会让 >30KB 中文输出仍可能乱码。
+
 ## 2026-11-13 feat(agent): 会话 jsonl 逐条记录时间戳 `_ts`
 
 会话消息此前只有会话级时间信息（文件名与文件 mtime），拿到不了一条消息的先后与间隔。

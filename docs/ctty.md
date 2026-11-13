@@ -62,7 +62,7 @@
 | `OEMCP() uint32` | 系统 OEM 代码页（`GetOEMCP`，恒成功）|
 | `EnsureUTF8()` | 启动期快照并把控制台双代码页切 65001（输入/输出两侧独立判定：各自探测成功且非 65001 才切，失败侧不动），幂等；由 `main` 在 `flag.Parse` 后单点调用 |
 | `RestoreUTF8()` | 复原快照代码页并清零，幂等；`main` 以 defer + `exitNow` 收口全部退出路径，windows 紧急强退路径经 `emergencyRestore` 同样复原 |
-| `FallbackCP() uint32` | run_shell 兜底转码源：优先启动快照的原输出代码页（子进程管道输出跟随控制台代码页），无快照（本就 65001 或无控制台）回落 `OEMCP()`；posix 恒 0 |
+| `FallbackCP() uint32` | run_shell 解码用的码页：返回控制台**当前**输出代码页（子进程此刻写出的字节按它解码），读不到再回落启动快照的原值 / `OEMCP()`；快照原值只服务 `RestoreUTF8`，与本函数语义分离；posix 恒 0 |
 | `DecodeCP(cp uint32, b []byte) []byte` | 按 cp 转 UTF-8（`MultiByteToWideChar → WideCharToMultiByte(CP_UTF8)`，flags=0 不用 `MB_ERR_INVALID_CHARS`：非法/残缺字节落 U+FFFD 而非整体失败）；cp 为 0、空输入或转换失败原样返回；posix 恒等 |
 | `Facts` / `Probe()` | 探测结果聚合（StdinTTY/StdoutTTY/Cols/Rows/SizeOK/VT/Kind），`main` 单点调用 |
 | `ResetModes(tty *os.File) bool` | 复位终端模式：SGR、字符集（`SI` + G0/G1 回 ASCII）、显示光标、自动换行、origin 模式、普通方向键、鼠标上报、bracketed paste、focus 上报、退出备用屏、复位滚动区。顺序固定为「属性类复位（SGR/字符集/模式）→ `\x1b[?1049l` → `\x1b[r`」；这两条都会动光标（`DECRST 1049` 即使在主屏也按 DECRC 恢复保存槽、`CSI r`/DECSTBM 把光标 home），故**调用方必须先 `SaveCursor`、复位后 `RestoreCursor` 收尾**，串内不得自带 `DECSC`/`DECRC`（会覆盖调用方的存档槽）。2026-09-16 二次修订，取代此前「把会移光标的两条包在 `DECSC`…`DECRC` 内」的做法——实测证明自包只能保住「已被子进程打乱」的位置；**2026-10-10 三次修订**：归还终端前调用方要**再 `SaveCursor` 一次**（见下表两行），把归位点从「借出前」换成「子进程留下的位置」 |
@@ -84,6 +84,7 @@
 - **只下沉原语，不下沉策略**：不提供 `Handover/Restore` 组合函数。2026-09-27 后策略只剩一处——`readline` 的 Console/租约（何时借出、切模式、存锚点），`tools/shell` 只表达意图（`LendStdin`/`LendFull`）、`repl` 只消费事件流；与 tanya 的 `docs/design.md`《事实归属》的分工一致：共享原语，策略不回流本包。
 - **termios 原语进 `ctty`（2026-09-15 修订，原结论为"不进"）**：原判断"仅 readline 使用"在 `run_shell` 需要**快照并在子进程结束后复原**控制终端时失效——`agent` 侧持有策略（何时移交、何时复原），原语与 readline 私有实现重复。现由 `ctty` 独占 termios 读写(`Get/Set/SetTermiosFlush`)与模式复位（`ResetModes`），`readline` 删私有 helper 改用 `ctty`，raw mode 的**构造**（flag 组合）仍留各消费方：那是策略，不是原语。跨平台的输入模式快照/复原（`InputModes` + `SnapshotInput`/`RestoreInput`，2026-09-17 引入）已于 2026-09-27 随 stdin 租约删除：posix 租约改为直接用 `GetTermios`/`SetTermios` 复原，Windows 侧不再需要回合末复原（子进程不再接管控制台 stdin）。
 - **代码页快照态收在 `ctty`（2026-09-17）**：`EnsureUTF8/RestoreUTF8` 看似策略，但快照必须同时供 `main`（切换/复原）与 `agent`（`FallbackCP` 转码源）读取，跨包共享的唯一自然落点就是 `ctty`——与运行期信号的退出态同构：原语 + 一份包级状态，调用时序由消费方保证（`EnsureUTF8` 严格先于任何子进程派生与终端读写）。
+- **`FallbackCP` 语义收窄为「当前码页」（2026-11-13）**：此前它返回的是「自己改码页前的原值」，在**本来就 65001** 的控制台（Windows Terminal 等）上快照为空、直接落到 `OEMCP()`（936），把合法 UTF-8 输出按 GBK 解成乱码（`中文` → `涓枃`，带私有区字符）。现改为先读 `ConsoleOutputCP()`，快照原值仅作为读不到时的兜底——「还原用码页」与「解码用码页」两个语义分开。唯一调用点 `tools/shell/platform_windows.go` 的 `windowsDecodeOutput` 不受影响。
 
 ## 分片
 

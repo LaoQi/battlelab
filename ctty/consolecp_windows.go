@@ -84,6 +84,9 @@ func RestoreUTF8() {
 func FallbackCP() uint32 {
 	utf8Mu.Lock()
 	defer utf8Mu.Unlock()
+	if cp, ok := ConsoleOutputCP(); ok && cp != 0 {
+		return cp
+	}
 	if utf8OrigOut != 0 {
 		return utf8OrigOut
 	}
