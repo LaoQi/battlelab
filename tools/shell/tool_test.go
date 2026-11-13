@@ -197,7 +197,7 @@ func TestNewShellToolEmptyPrograms(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("空切片应跳过程序探针: LookPath 调用 %d 次", calls)
 	}
-	if desc := tool.toolDesc(); strings.Contains(desc, "可用程序") {
+	if desc := tool.toolDesc(); strings.Contains(desc, "可用程序: ") {
 		t.Errorf("无程序时不应追加可用程序段: %q", desc)
 	}
 }

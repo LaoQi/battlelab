@@ -83,7 +83,11 @@ func consoleTool(t *testing.T, c Console) *Tool {
 
 func TestRunShellFullCapture(t *testing.T) {
 	f := &fakeConsole{}
-	res := consoleTool(t, f).run(context.Background(), request{Command: `echo hi; echo oops >&2`, TimeoutSec: 10, Interactive: true})
+	cmd := `echo hi; echo oops >&2`
+	if runtime.GOOS == "windows" {
+		cmd = `echo hi; [Console]::Error.WriteLine('oops')`
+	}
+	res := consoleTool(t, f).run(context.Background(), request{Command: cmd, TimeoutSec: 10, Interactive: true})
 	if !f.full || !f.released {
 		t.Fatalf("借出未走全流程: %+v", f)
 	}

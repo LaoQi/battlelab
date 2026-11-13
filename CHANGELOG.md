@@ -1,3 +1,17 @@
+## 2026-11-13 fix(tools/shell): 补上 v0.3.1 遗漏的 2 条 Windows 测试失败
+
+上一轮 Windows 全绿修复（58e7f7e）后，`tools/shell` 在 Windows 上仍有 2 条失败，均为
+**测试代码问题而非实现缺陷**（`go build`/`go vet`/`gofmt -l` 全干净，Linux/macOS 通过）。
+归因留档见工作区 issue 目录。
+
+- **`TestRunShellFullCapture`**（`bridge_test.go`）：命令 `echo hi; echo oops >&2` 用了
+  POSIX fd 复制重定向，PowerShell 不支持。改为按平台分片：Windows 用跨 shell 通用的
+  `[Console]::Error.WriteLine('oops')` 造 stderr，保住「桥接单流合流」这条断言的覆盖
+  （优于直接 `t.Skip`）。注意不能改成 `2>&1`——语义相反，会让断言假通过。
+- **`TestNewShellToolEmptyPrograms`**（`tool_test.go`）：断言裸子串 `"可用程序"` 范围过宽，
+  Windows 能力句本身以「以『可用程序』清单为准。」结尾，必然误报。收紧为精确匹配清单段
+  实际写入形态 `"可用程序: "`。该模式在包内是孤例，其余断言均为精确串。
+
 ## 2026-11-10 fix: Windows 下 `go test ./...` 全绿（含 3 处真缺陷与 1 处测试污染）
 
 Windows 上跑全量测试有 58 项失败（其中 1 处 panic 会打断整个包）。逐项归因后分三类处理：
