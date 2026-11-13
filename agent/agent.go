@@ -299,6 +299,9 @@ func (a *Agent) Fork() (string, error) {
 	return a.store.id(), nil
 }
 
+// nowMS 是落盘时间戳的口径（毫秒）。会话 jsonl 的 _ts 一律经它取。
+func nowMS() int64 { return time.Now().UnixMilli() }
+
 const noticeLimit = 200
 
 type InterruptError struct {
@@ -324,7 +327,7 @@ func (a *Agent) Ask(ctx context.Context, input string, sink EventSink) error {
 	}
 	start := time.Now()
 	base := len(a.history)
-	a.history = append(a.history, Message{Role: "user", Content: input})
+	a.history = append(a.history, Message{Role: "user", Content: input, TS: nowMS()})
 	err := a.ask(ctx, sink, base, base+1)
 	a.settleTurn(start, err, sink)
 	return err
@@ -402,6 +405,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 		if err != nil {
 			return err
 		}
+		resp.TS = start.UnixMilli()
 		a.history = append(a.history, *resp)
 		if resp.Usage != nil {
 			a.stats.record(resp.Usage)
@@ -424,6 +428,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 				ToolCallID: tc.ID,
 				Name:       tc.Function.Name,
 				Content:    res.Text,
+				TS:         nowMS(),
 			})
 			if len(res.Images) > 0 {
 				roundImageTools = append(roundImageTools, tc.Function.Name)

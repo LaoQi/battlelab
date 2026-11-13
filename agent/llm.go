@@ -26,6 +26,10 @@ type Message struct {
 	ReasoningItems   []ReasoningItem `json:"reasoning_items,omitempty"`
 	Usage            *Usage          `json:"-"`
 	Duration         time.Duration   `json:"-"`
+
+	// TS 落盘时间戳（毫秒）。私有键以 _ 开头：仅写会话 jsonl，不进上游请求体
+	// （由 chatWireMessages 清除，见 docs 与 TestSessionStampsMessages）。
+	TS int64 `json:"_ts,omitempty"`
 }
 
 type chatContentPart struct {
@@ -235,6 +239,7 @@ func chatWireMessages(messages []Message, detail string) []any {
 	wire := make([]any, len(messages))
 	for i, m := range messages {
 		wm := m
+		wm.TS = 0 // 私有键（_）不外发：时间戳只落盘
 		wm.ReasoningItems = nil
 		wm.ReasoningContent = ""
 		if m.Role == "assistant" {

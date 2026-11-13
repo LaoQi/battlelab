@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -481,5 +482,101 @@ func TestSettleTurnStillRunsWhenFileDeleted(t *testing.T) {
 	_ = a.Ask(context.Background(), "第二问", sink)
 	if !end.Failed {
 		t.Error("文件丢失导致的回合失败应反映在 EventTurnEnd.Failed")
+	}
+}
+
+// 落盘消息带 _ts：仅首行 system（会话快照）不打点，其余逐条递增。
+func TestSessionStampsMessages(t *testing.T) {
+	m := newMockLLM(t,
+		mockStep{toolCalls: []mockToolCall{{id: "call_1", name: "calc", args: `{"expression":"1+1"}`}}},
+		mockStep{content: "done"},
+	)
+	// 带 system 提示：首行 system 才会写入文件，下面「system 不打点」的断言才真的被执行。
+	a := newAgent(t, m, WithSystemPrompt(testBasePrompt))
+	if err := a.Ask(context.Background(), "跑一轮", nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(a.SessionFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), `{"role":"system"`) {
+		t.Fatalf("首行应为 system 快照: %.80s", data)
+	}
+	var prev int64
+	stamped := 0
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		var msg Message
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			t.Fatalf("解析会话行: %v (%q)", err, line)
+		}
+		if msg.Role == "system" {
+			// 首行 system 是会话快照，由 encodeMessages 直写，按设计不打点。
+			if msg.TS != 0 {
+				t.Errorf("system 快照不应带 _ts: %d", msg.TS)
+			}
+			continue
+		}
+		if msg.TS <= 0 {
+			t.Errorf("%s 消息缺少 _ts: %q", msg.Role, line)
+			continue
+		}
+		if msg.TS < prev {
+			t.Errorf("_ts 应单调不减: %d → %d", prev, msg.TS)
+		}
+		prev = msg.TS
+		stamped++
+	}
+	if stamped < 4 { // user + assistant + tool + assistant
+		t.Errorf("打点消息数偏少: %d", stamped)
+	}
+}
+
+// 私有键（_ 开头）一律不外发：wire 上不出现任何 _ 前缀 key。
+func TestChatWireHasNoPrivateKeys(t *testing.T) {
+	m := newMockLLM(t,
+		mockStep{toolCalls: []mockToolCall{{id: "call_1", name: "calc", args: `{"expression":"1+1"}`}}},
+		mockStep{content: "done"},
+	)
+	a := newAgent(t, m)
+	if err := a.Ask(context.Background(), "跑一轮", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.reqs) != 2 {
+		t.Fatalf("请求数: %d", len(m.reqs))
+	}
+	for i, req := range m.reqs {
+		for j, wm := range req.Messages {
+			for key := range wireMap(t, wm) {
+				if strings.HasPrefix(key, "_") {
+					t.Errorf("第 %d 个请求第 %d 条消息泄漏私有键 %q", i, j, key)
+				}
+			}
+		}
+	}
+}
+
+// 老会话文件（无 _ts）照常载入，TS 取零值（展示层判 >0 才显示，不误判为真实时间）。
+func TestSessionLoadLegacyWithoutTS(t *testing.T) {
+	dir := t.TempDir()
+	s := newSessionStore(dir, "", "", false)
+	path := filepath.Join(dir, "20260101-000000.jsonl")
+	content := `{"role":"system","content":"sys"}` + "\n" +
+		`{"role":"user","content":"老问题"}` + "\n" +
+		`{"role":"assistant","content":"老回答"}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	history, system, err := s.load("20260101-000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if system != "sys" || len(history) != 2 {
+		t.Fatalf("载入结果异常: system=%q 条数=%d", system, len(history))
+	}
+	for _, msg := range history {
+		if msg.TS != 0 {
+			t.Errorf("老文件不应有 _ts: %s → %d", msg.Role, msg.TS)
+		}
 	}
 }

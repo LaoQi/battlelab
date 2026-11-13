@@ -1,3 +1,21 @@
+## 2026-11-13 feat(agent): 会话 jsonl 逐条记录时间戳 `_ts`
+
+会话消息此前只有会话级时间信息（文件名与文件 mtime），拿到不了一条消息的先后与间隔。
+`Message` 新增 `TS int64`（毫秒，`json:"_ts,omitempty"`），在消息创建处打点，随会话落盘。
+
+- **私有键约定**：key 以 `_` 开头 = 只落盘、绝不外发。`chatWireMessages` 里 `wm.TS = 0`
+  清空（与既有的 `ReasoningItems`/`ReasoningContent` 剥离同处同构），`omitempty` 保证
+  wire 上不出现该字段。responses 协议走 `buildResponsesInput` 显式白名单，天然不含。
+- **打点位置**：`Ask` 的 user 输入取 `nowMS()`；assistant 取该次请求的发起时刻
+  （`runTurn` 里现成的 `start`，故 `_ts` 表示「请求开始」而非「响应结束」）；tool 结果取
+  执行完成时刻。**首行 system 快照不打点**——它是会话级事实，时刻已由文件名承载。
+- **兼容**：老会话文件读回 `TS == 0`，不报错、不需迁移；旧读方忽略未知 key（全仓无
+  `DisallowUnknownFields`）。展示层应判 `TS > 0` 才渲染，避免把零值显示成 1970。
+- **归档**：卷内是源文件逐字节拷贝，新旧混杂照常，逻辑不动。
+- **测试**：`TestSessionStampsMessages`（逐条 `_ts` 单调不减 + system 快照不带）、
+  `TestChatWireHasNoPrivateKeys`（wire 上无任何 `_` 前缀 key，守住未来私有字段）、
+  `TestSessionLoadLegacyWithoutTS`（老文件零值载入）。
+
 ## 2026-11-13 fix(tools/shell): 补上 v0.3.1 遗漏的 2 条 Windows 测试失败
 
 上一轮 Windows 全绿修复（58e7f7e）后，`tools/shell` 在 Windows 上仍有 2 条失败，均为
