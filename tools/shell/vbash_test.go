@@ -190,16 +190,16 @@ func TestVbashCwdFieldKeptOnlyWhenExplicit(t *testing.T) {
 	}
 }
 
-// vbash 下 interactive 仍进解释器（只是要终端）：无借出能力时报错，
-// 既不回落宿主 shell，也不静默降级成无终端执行。
-func TestVbashInteractiveStillRunsInInterpreter(t *testing.T) {
+// vbash 下 interactive 仍进解释器，且**不需要**向调用方借终端：
+// 宿主自建虚拟 tty，因此注入 nullConsole 也能正常执行。
+func TestVbashInteractiveRunsWithoutBorrowingTerminal(t *testing.T) {
 	tool := testVbashTool(t, func(c *Config) { c.Console = nullConsole{} })
 	res := tool.run(context.Background(), request{Command: "echo hi", Interactive: true, TimeoutSec: 10})
-	if res.Err != ErrNoLend.Error() {
-		t.Fatalf("借不到终端应报 interactive 不支持: %+v", res)
+	if res.Err != "" {
+		t.Fatalf("interactive 不应因借不到终端而报错: %+v", res)
 	}
-	if strings.Contains(shellStdout(res), "hi") {
-		t.Errorf("借不到终端时不应执行命令: %+v", res)
+	if !strings.Contains(shellStdout(res), "hi") {
+		t.Errorf("interactive 应正常执行命令: %+v", res)
 	}
 }
 

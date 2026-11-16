@@ -124,19 +124,16 @@ func (t *Tool) run(ctx context.Context, req request) *Result {
 	if t.console == nil {
 		t.console = nullConsole{}
 	}
+	if t.profile.Builtin {
+		// vbash 只有一条执行路径：外部命令一律经会话宿主，interactive 只影响
+		// 输出是否泵到真实终端（宿主自己持有虚拟 pty，不需要向调用方借终端）。
+		return defaultCwd(t.runVbash(ctx, req.Command, timeoutSec, dir, req.Interactive), explicit)
+	}
 	if req.Interactive {
-		if t.profile.Builtin {
-			// 解释器没有可交给宿主 shell 的进程，interactive 也只能由它自己执行：
-			// 借来的 pty slave 既是它的 stdio，也是前台子进程的控制终端。
-			return defaultCwd(t.runVbashInteractive(ctx, req.Command, timeoutSec, dir), explicit)
-		}
 		if res, ok := runFull(ctx, t.console, req.Command, timeoutSec, t.profile, dir); ok {
 			return defaultCwd(res, explicit)
 		}
 		return &Result{Command: req.Command, Err: ErrNoLend.Error()}
-	}
-	if t.profile.Builtin {
-		return defaultCwd(t.runVbash(ctx, req.Command, timeoutSec, dir), explicit)
 	}
 	return defaultCwd(runForeground(ctx, t.console, req.Command, timeoutSec, t.profile, dir, req.Interactive), explicit)
 }

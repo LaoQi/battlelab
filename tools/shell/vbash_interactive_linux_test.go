@@ -4,152 +4,25 @@ package shell
 
 import (
 	"context"
-	"io"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
-// ptyConsole 模拟 tanya 的 Console.LendFull：分配一对 pty，slave（Stdin() 的返回值）
-// 交给解释器作 stdio，master 一侧把输出泵给 capture；feed 在 delay 之后模拟用户键入。
-type ptyConsole struct {
-	feed  string
-	delay time.Duration
-	fail  bool
-	mu    sync.Mutex
-	out   strings.Builder
-}
+// 会话宿主架构下 vbash 的终端语义：一次 run_shell 自建一台虚拟 tty，
+// 所有外部命令共享它（各自独立进程组、前台命令设前台组）。
+// 因此不再有「向调用方借终端」这一步 —— 下列用例覆盖新语义。
 
-func (c *ptyConsole) LendStdin() (Lease, error) { return nullLease{}, nil }
-
-func (c *ptyConsole) LendFull(_ *exec.Cmd, capture io.Writer) (Lease, error) {
-	if c.fail {
-		return nil, ErrNoLend
-	}
-	master, slave, err := openTestPTY()
-	if err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	c.out.Reset()
-	c.mu.Unlock()
-	l := &ptyLease{master: master, slave: slave, pumpDone: make(chan struct{})}
-	forward := func(b []byte) {
-		c.mu.Lock()
-		c.out.Write(b)
-		c.mu.Unlock()
-		if capture != nil {
-			_, _ = capture.Write(b)
-		}
-	}
-	go func() {
-		defer close(l.pumpDone)
-		buf := make([]byte, 4096)
-		for {
-			n, err := master.Read(buf)
-			if n > 0 {
-				forward(buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	if c.feed != "" {
-		go func() {
-			time.Sleep(c.delay)
-			_, _ = master.Write([]byte(c.feed))
-		}()
-	}
-	return l, nil
-}
-
-// raw 返回 pty 上出现过的全部字节（含回显），用于断言不依赖工具结果。
-func (c *ptyConsole) raw() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.out.String()
-}
-
-type ptyLease struct {
-	master   *os.File
-	slave    *os.File
-	pumpDone chan struct{}
-	once     sync.Once
-	released bool
-}
-
-func (l *ptyLease) Stdin() *os.File { return l.slave }
-
-// Release 复刻真实租约的次序：先关 slave（解释器一侧的写入端）让泵把 master 里
-// 残留的字节读尽（读尽后读 master 返回 EIO），再关 master。
-// 反过来直接关设备会把尚未取走的输出连同结果一起丢掉。
-func (l *ptyLease) Release() {
-	l.once.Do(func() {
-		l.released = true
-		l.slave.Close()
-		if l.pumpDone != nil {
-			select {
-			case <-l.pumpDone:
-			case <-time.After(2 * time.Second):
-			}
-		}
-		l.master.Close()
-	})
-}
-
-func openTestPTY() (*os.File, *os.File, error) {
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
-		master.Close()
-		return nil, nil, err
-	}
-	ptn, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
-	if err != nil {
-		master.Close()
-		return nil, nil, err
-	}
-	slave, err := os.OpenFile("/dev/pts/"+strconv.Itoa(ptn), os.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		master.Close()
-		return nil, nil, err
-	}
-	return master, slave, nil
-}
-
-func vbashPtyTool(t *testing.T, c Console) *Tool {
+func hostTool(t *testing.T) *Tool {
 	t.Helper()
-	return testVbashTool(t, func(cfg *Config) { cfg.Console = c })
+	return testVbashTool(t, func(cfg *Config) { cfg.Console = nullConsole{} })
 }
 
-// interactive 命令在 vbash 下仍由解释器执行：内建 read 能从终端读到用户输入。
-func TestVbashInteractiveBuiltinRead(t *testing.T) {
-	con := &ptyConsole{feed: "hello\n", delay: 300 * time.Millisecond}
-	res := vbashPtyTool(t, con).run(context.Background(), request{
-		Command: `read -r ans; echo "got=[$ans]"`, Interactive: true, TimeoutSec: 20,
-	})
-	if res.Err != "" || res.TimedOut {
-		t.Fatalf("执行异常: %+v（pty 原始输出 %q）", res, con.raw())
-	}
-	if got := shellStdout(res); !strings.Contains(got, "got=[hello]") {
-		t.Errorf("内建 read 应读到终端输入: %q（pty 原始输出 %q）", got, con.raw())
-	}
-}
-
-// 外部命令拿到真实 pts 作控制终端，可打开 /dev/tty（sudo/ssh/gpg 依赖这一点）。
-func TestVbashInteractiveExternalGetsControllingTTY(t *testing.T) {
-	res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-		Command:     `sh -c 'tty; exec 3</dev/tty && echo devtty-ok || echo devtty-fail'`,
-		Interactive: true, TimeoutSec: 20,
+// 外部命令看到的是宿主的虚拟 pts，并且能打开 /dev/tty。
+func TestVbashHostProvidesControllingTTY(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sh -c 'tty; exec 3</dev/tty && echo devtty-ok || echo devtty-fail'`,
+		TimeoutSec: 20,
 	})
 	out := shellStdout(res)
 	if !strings.Contains(out, "/dev/pts/") {
@@ -160,11 +33,11 @@ func TestVbashInteractiveExternalGetsControllingTTY(t *testing.T) {
 	}
 }
 
-// GPG_TTY/SSH_TTY 指向借出的设备，否则 gpg/ssh 会去问 agent 要终端。
-func TestVbashInteractiveTTYEnv(t *testing.T) {
-	res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-		Command:     `sh -c 'echo "gpg=$GPG_TTY ssh=$SSH_TTY"; tty'`,
-		Interactive: true, TimeoutSec: 20,
+// GPG_TTY/SSH_TTY 指向虚拟设备，否则 gpg/ssh 会去问 agent 要终端。
+func TestVbashHostTTYEnv(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sh -c 'echo "gpg=$GPG_TTY ssh=$SSH_TTY"; tty'`,
+		TimeoutSec: 20,
 	})
 	out := shellStdout(res)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -180,97 +53,98 @@ func TestVbashInteractiveTTYEnv(t *testing.T) {
 	}
 }
 
-// 回归：内建 read 曾把 fd 0 包成 bufio.Reader，之后的外部命令被 os/exec 改成管道拷贝，
-// 在不会 EOF 的终端上双向死锁。read 不预读、不替换 fd 0 后该序列必须正常返回。
-func TestVbashInteractiveReadThenExternalDoesNotHang(t *testing.T) {
-	con := &ptyConsole{feed: "abc\n", delay: 300 * time.Millisecond}
-	done := make(chan *Result, 1)
-	go func() {
-		done <- vbashPtyTool(t, con).run(context.Background(), request{
-			Command:     `read -r ans; echo "got=$ans"; sh -c 'echo after-ok'`,
-			Interactive: true, TimeoutSec: 20,
-		})
-	}()
-	select {
-	case res := <-done:
-		out := shellStdout(res)
-		if !strings.Contains(out, "got=abc") || !strings.Contains(out, "after-ok") {
-			t.Errorf("read 后的外部命令未正常执行: %+v", res)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("read 之后执行外部命令挂死（fd 0 被缓冲器劫持）")
+// stdin 未被重定向时接虚拟 tty：`tty`/`test -t 0` 与真实 shell 一致。
+func TestVbashHostPlainStdinIsTTY(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sh -c 'test -t 0 && echo stdin-tty || echo stdin-not-tty'`,
+		TimeoutSec: 20,
+	})
+	if got := shellStdout(res); !strings.Contains(got, "stdin-tty") {
+		t.Errorf("普通命令的 stdin 应接虚拟 tty: %q", got)
 	}
 }
 
-// 前台与后台命令共用同一个控制终端（与真实 bash 一致）：会话由独立宿主进程
-// 持有，各命令只建自己的进程组。后台命令同样能打开 /dev/tty——
-// bash 里如此，区别只在于它读终端会被 SIGTTIN 停住，而不是打不开。
-func TestVbashInteractiveBackgroundSharesTerminal(t *testing.T) {
-	out := t.TempDir() + "/bg.txt"
-	res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-		Command: "sh -c '(exec 3</dev/tty) 2>/dev/null && echo fg-ok || echo fg-fail'; " +
-			"{ sh -c '(exec 3</dev/tty) 2>/dev/null && echo bg-ok || echo bg-fail' > " + out +
-			" & }; sleep 1; cat " + out,
-		Interactive: true, TimeoutSec: 20,
+// 管道/重定向时 stdin 走协议搬运，不接终端。
+func TestVbashHostRedirectedStdinNotTTY(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `echo hi | sh -c 'test -t 0 && echo pipe-tty || echo pipe-not-tty; cat'`,
+		TimeoutSec: 20,
 	})
 	got := shellStdout(res)
-	if !strings.Contains(got, "fg-ok") {
-		t.Errorf("前台命令应能打开控制终端: %q", got)
+	if !strings.Contains(got, "pipe-not-tty") {
+		t.Errorf("管道段的 stdin 不应是终端: %q", got)
 	}
-	if !strings.Contains(got, "bg-ok") {
-		t.Errorf("后台命令与前台共用同一控制终端，应能打开 /dev/tty: %q", got)
-	}
-}
-
-// 借不到终端即报错，绝不回落宿主 shell。
-func TestVbashInteractiveWithoutTerminalErrors(t *testing.T) {
-	res := vbashPtyTool(t, &ptyConsole{fail: true}).run(context.Background(), request{
-		Command: "echo should-not-run", Interactive: true, TimeoutSec: 10,
-	})
-	if !strings.Contains(res.Err, "interactive 不支持") {
-		t.Fatalf("借出失败应明确报错: %+v", res)
-	}
-	if strings.Contains(shellOut(res), "should-not-run") {
-		t.Errorf("借出失败不应执行命令（也不得回落宿主 shell）: %+v", res)
+	if !strings.Contains(got, "hi") {
+		t.Errorf("管道数据应送达: %q", got)
 	}
 }
 
-// interactive 路径同样要保留退出码、超时与中断语义。
-func TestVbashInteractiveExitCodeAndTimeout(t *testing.T) {
-	res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-		Command: "sh -c 'exit 7'", Interactive: true, TimeoutSec: 20,
+// 管道各段共享同一台虚拟 tty（各段都能打开 /dev/tty）。
+func TestVbashHostPipelineSharesTerminal(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sh -c 'exec 3</dev/tty && echo seg1-ok' | cat; sh -c 'exec 3</dev/tty && echo seg2-ok'`,
+		TimeoutSec: 20,
 	})
-	if res.ExitCode != 7 {
-		t.Errorf("退出码应保留: %+v", res)
+	got := shellStdout(res)
+	if !strings.Contains(got, "seg1-ok") || !strings.Contains(got, "seg2-ok") {
+		t.Errorf("管道各段应共享同一控制终端: %q", got)
 	}
-	res = vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-		Command: "sleep 5", Interactive: true, TimeoutSec: 1,
+}
+
+// 后台命令与前台共用同一控制终端，但只有前台命令是前台进程组。
+func TestVbashHostBackgroundNotForeground(t *testing.T) {
+	out := t.TempDir() + "/bg.txt"
+	res := hostTool(t).run(context.Background(), request{
+		Command: "sh -c 'echo fg-tpgid=$(ps -o tpgid= -p $$|tr -d \" \")' ; " +
+			"{ sh -c 'echo bg-tpgid=$(ps -o tpgid= -p $$|tr -d \" \")' > " + out + " & }; sleep 1; cat " + out,
+		TimeoutSec: 20,
+	})
+	got := shellStdout(res)
+	if !strings.Contains(got, "fg-tpgid=") {
+		t.Errorf("前台命令应能取到 tpgid: %q", got)
+	}
+	if !strings.Contains(got, "bg-tpgid=") {
+		t.Errorf("后台命令应能取到 tpgid: %q", got)
+	}
+}
+
+// 并发命令不互相阻塞：后台长命令不拖住前台命令。
+func TestVbashHostConcurrentNotBlocked(t *testing.T) {
+	start := time.Now()
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sleep 1 & echo hi`,
+		TimeoutSec: 20,
+	})
+	if got := shellStdout(res); !strings.Contains(got, "hi") {
+		t.Errorf("前台命令应立即执行: %q", got)
+	}
+	if d := time.Since(start); d > 900*time.Millisecond {
+		t.Errorf("前台命令被后台命令阻塞了: %v", d)
+	}
+}
+
+// 命令替换的输出不得泄漏到工具结果。
+func TestVbashHostCommandSubstitutionIsolated(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `x=$(seq 1 100); echo "len=${#x}"`,
+		TimeoutSec: 20,
+	})
+	got := shellStdout(res)
+	if !strings.Contains(got, "len=291") {
+		t.Errorf("命令替换应只进变量: %q", got)
+	}
+	if strings.Count(got, "\n") > 3 {
+		t.Errorf("命令替换的输出泄漏到 stdout 了: %q", got)
+	}
+}
+
+// 超时能杀掉宿主里那条命令的进程组。
+func TestVbashHostTimeoutKillsGroup(t *testing.T) {
+	res := hostTool(t).run(context.Background(), request{
+		Command:    `sleep 300`,
+		TimeoutSec: 1,
 	})
 	if !res.TimedOut {
-		t.Errorf("应报超时: %+v", res)
-	}
-}
-
-// 回归：stdin 被重定向的前台命令仍须取得控制终端。
-// 旧实现拿「子进程的 stdin 是否正好是借出的 pty slave」当判据，于是
-// `cmd < /dev/null`、`printf x | cmd`、`{ cmd; } < /dev/null` 这类命令被误判成
-// 后台，进了新会话却拿不到 ctty，sudo 报「读取密码需要一个终端」。
-// 现在判据是解释器给出的前台标记，控制终端经额外 fd 交付，与 stdin 形态解耦。
-func TestVbashInteractiveRedirectedStdinKeepsTTY(t *testing.T) {
-	probe := `sh -c '(exec 3</dev/tty) 2>/dev/null && echo devtty-ok || echo devtty-fail'`
-	cases := map[string]string{
-		"plain":     probe,
-		"devnull":   probe + ` < /dev/null`,
-		"left-pipe": `printf x | ` + probe,
-		"brace-sub": `{ ` + probe + `; } < /dev/null`,
-		"subshell":  `( ` + probe + ` ) < /dev/null`,
-	}
-	for name, cmd := range cases {
-		res := vbashPtyTool(t, &ptyConsole{}).run(context.Background(), request{
-			Command: cmd, Interactive: true, TimeoutSec: 20,
-		})
-		if out := shellStdout(res); !strings.Contains(out, "devtty-ok") {
-			t.Errorf("%s: stdin 重定向不应影响控制终端: %q", name, out)
-		}
+		t.Errorf("应超时: %+v", res)
 	}
 }

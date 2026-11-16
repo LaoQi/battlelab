@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"os/exec"
-	"strings"
 
 	"github.com/LaoQi/battlelab/vbash"
 )
@@ -69,4 +68,11 @@ func (inv Invocation) runArgv(ctx context.Context, script string, o RunOptions) 
 	return cmd.Run()
 }
 
-func emptyStdin() io.Reader { return strings.NewReader("") }
+// emptyStdinReader 标记「stdin 未被重定向/接管道」：宿主据此把命令的 stdin
+// 接到虚拟 tty（与真实 shell 一致，`tty`/`test -t 0` 因此正常工作），
+// 而不是喂一个立刻 EOF 的空流。
+type emptyStdinReader struct{}
+
+func (emptyStdinReader) Read([]byte) (int, error) { return 0, io.EOF }
+
+func emptyStdin() io.Reader { return emptyStdinReader{} }
