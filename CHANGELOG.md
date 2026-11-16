@@ -1,3 +1,52 @@
+## 2026-11-17 fix(tools/shell): 补非交互终端锚点、修 relay 收尾死锁与桥回显泄露
+
+会话宿主架构（fd2d757）落地后渲染审计留有三处红，逐一归因修复：
+
+- **非 interactive 丢终端锚点**：vbash 内建重定向（`printf ... > /dev/tty`）由调用方进程直接写
+  真实终端，模式污染原本靠 `LendStdin` 归还时的 `anchorTerminal` 复位，新架构该分支不借租约、
+  污染无人清（`clean-tty-modes`/`clean-alt-screen-exit` 回归）。补回租约；不得与 interactive 的
+  `LendFull` 并用——console 的 lend 记账是状态位，嵌套借用会在首个归还时提前唤醒前台读者。
+- **relay 收尾死锁**：读 goroutine 阻塞在 `dev.Read`，`stop()` 只关通道不关设备，interactive 一
+  结束 run_shell 永久挂在收尾。改为先恢复桥 termios（fd 仍有效）再关闭设备强制唤醒阻塞读；
+  租约侧随后的重复关闭无害。
+- **桥回显泄露密码**：sudo/ssh 在虚拟 tty 上关掉的回显，会被中间桥 pty 的无条件回显泄露到屏幕。
+  `relayPipeMode` 把桥 slave 设为哑管道（关 `ECHO`/`ECHONL`/`ICANON`/`ISIG`/`OPOST`），回显与
+  行编辑职责完全交给虚拟 tty——那里才是被跑程序的地盘；Windows 无 termios，stub 保持原模式。
+- **陷阱留档**：`os.File.Fd()` 会把 fd 从运行时 poller 的非阻塞模式切回阻塞模式，之后阻塞读走
+  裸 syscall、`Close` 再也唤不醒；ioctl 后必须恢复 `O_NONBLOCK`（`relayPipeMode` 在读 goroutine
+  启动前调用，无竞态窗口）。
+- **验证**：探针确认 relay 单次回显与 stop 可返回、interactive read 全链路取到注入行、
+  `stty -echo` 期间输入零上屏；三仓 build/vet/test、`make cross`、`make vbash-check` 290/290、
+  tanya 渲染审计 17/17 全绿（`clean-tty-modes`/`clean-alt-screen-exit`/`clean-interactive-release`
+  三条转绿）。
+
+## 2026-11-16 feat(tools/shell)!: 会话宿主自建虚拟 pty，stdio 帧协议替代 fd 传递
+
+上一版会话宿主只覆盖 Linux：宿主消费调用方借出的 pts，靠 socketpair+`ExtraFiles` 传描述符、
+`/proc/<ppid>/fd` 回开文件，darwin 走 stub 不设宿主。这三条通路在 Windows 上都不存在
+（os/exec 明写 ExtraFiles is not supported on Windows），而 vbash 要求跨平台一致——宿主模型
+必须只建立在「所有平台都有的东西」之上。
+
+- **宿主自建虚拟 pty**（`sessionhost_posix.go`/`pty_linux.go`/`pty_darwin.go`）：自举后
+  `BecomeSessionLeader` 自任会话首进程与前台组（真实交互 shell 的处境，只是终端是虚拟的）；
+  每条命令仍 `Setpgid` 建独立进程组（保留组杀），前台命令按需设为该 pty 的前台组、后台 `&`
+  不设；`GPG_TTY`/`SSH_TTY` 指向虚拟 tty。Windows 无会话语义，宿主退化为进程树容器、超时按
+  `taskkill /T` 统一终止。
+- **传输协议**（`transport.go`）：父子进程间只走宿主的 stdin/stdout，9 字节帧头
+  `type+jobID+len`、8 种帧型，jobID 多路复用并发命令；stdio 三种形态（管道读端/命令替换
+  buffer/重定向文件）由父进程如实搬运，宿主不需要父进程的任何 fd。删除 `sockpair_linux.go`/
+  `sessionhost_stub.go`/`hostexec_linux.go`。
+- **vbash 统一为一条执行路径**：普通与 interactive 同路，外部命令一律经宿主；interactive 只
+  影响呈现（`ttyRelay` 把真实终端按键泵进虚拟 tty、虚拟 tty 输出上屏并进工具结果）。删除独立
+  的 `runVbashInteractive`。
+- **未重定向的 stdin 接虚拟 tty**（`tty`/`test -t 0` 与真实 shell 一致，`emptyStdin()` 改为
+  哨兵类型供宿主识别）；**全屏交互程序（top/vim 类）明确不在支持范围**（无 winsize 同步）。
+- **BREAKING**：宿主不再消费调用方借出的 pts；`LendFull` 退化为呈现层桥接（真实终端与虚拟
+  tty 之间的双向泵），tanya 零改动适配。
+- **测试**：两个测试二进制经 `TestMain` 自举宿主；交互语义用例按新模型重写（虚拟 pts 可开
+  `/dev/tty`、`GPG_TTY`/`SSH_TTY`、`test -t 0`、管道各段共享终端、后台不设前台组、并发不阻塞、
+  命令替换隔离、超时组杀）；`make cross`（linux/darwin/windows）通过。
+
 ## 2026-11-13 fix(ctty): `FallbackCP()` 改跟随控制台当前码页
 
 Windows 上 `run_shell` 的中文输出会随机变成乱码（`中文` → `涓枃`，带私有区字符

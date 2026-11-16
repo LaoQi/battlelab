@@ -8,7 +8,7 @@
 >
 > 更正（2026-09-25）：`run_shell` 已从 `agent` 外置到 `tools/shell`（`agent` 本身零内部依赖、不再引用本包）——下文凡指 run_shell 一侧的 `agent`/`agent/shell*.go`，现均指 `tools/shell`（文件名 `platform*.go`/`bridge.go`）；原语与策略的划分不变。
 
-> **会话原语回归（2026-11-10）**：`BecomeSessionLeader`/`SetControllingTTY`/`SetForeground`/`ForegroundGroup`/`IgnoreTTOU` 是本包新增的一组**会话**原语，服务对象只有 `tools/shell` 的会话宿主进程（`interactive` 的外部命令由它持有 pts 并管前台组，见 `docs/shell-tool.md` §17.1）。它与 2026-09-27 删除的那组「前台组原语」不是同一件事：那组是**终端策略层**（tanya 的 REPL 自己移交前台），已随「tanya 恒前台」作废且不回归；这组只被独立宿主进程消费，策略仍在 `tools/shell`。
+> **会话原语回归（2026-11-10）**：`BecomeSessionLeader`/`SetControllingTTY`/`SetForeground`/`ForegroundGroup`/`IgnoreTTOU` 是本包新增的一组**会话**原语，服务对象只有 `tools/shell` 的会话宿主进程（外部命令由它承载：宿主自建虚拟 pty、自任会话首进程并管前台组，见 `docs/shell-tool.md` §17.1）。它与 2026-09-27 删除的那组「前台组原语」不是同一件事：那组是**终端策略层**（tanya 的 REPL 自己移交前台），已随「tanya 恒前台」作废且不回归；这组只被独立宿主进程消费，策略仍在 `tools/shell`。
 >
 > 控制台层**已实施**（2026-09-26 立项，2026-09-27 S1–S7 完工）：终端持有者、命名模式与 `^C` 归属收敛为三层（消费者 / Console 仲裁 / device 设备面；唯一持有者 + 借出分型 + 事件归一），见 tanya 的 `docs/terminal-console.md`。两项裁决均已落地：**前台组原语（`OwnPgrp`/`ForegroundPgrp`/`SetForeground`/`IsForeground`）与 `run_shell` 的 tty 直通整体删除**（普通命令 stdin = `/dev/null`、不再移交前台，`sudo`/`ssh` 需显式 `interactive: true`），`InputModes`/`SnapshotInput`/`RestoreInput` 随旧租约一并删除；**不做 `^Z` 子进程挂起检测**（`ProtectJobSignals` 的 SIGTSTP 吞没保留）。此后本文件只描述原语：位组合与终端策略收在 `readline` 内，不再新增模式常量。
 
