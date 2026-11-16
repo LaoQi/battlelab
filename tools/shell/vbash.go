@@ -42,6 +42,18 @@ func (t *Tool) runVbash(ctx context.Context, command string, timeoutSec int, dir
 	// 用户按键转发进虚拟 tty（sudo/ssh/gpg 因此可直接应答）。
 	// 非 interactive 时虚拟 tty 的输出只进工具结果，不上屏。
 	var ttyPump *ttyRelay
+	if !interactive {
+		// 终端锚点租约：内建命令的重定向（printf ... > /dev/tty）直接写 tanya
+		// 进程的真实终端，模式污染（autowrap off、光标隐藏、备用屏）必须在
+		// 归还时复位。interactive 分支由 LendFull 的归还路径承担同一职责，
+		// 这里为非 interactive 补上锚点（不得与 LendFull 并用：console 的
+		// lend 记账不是计数器，嵌套借用会在首个归还时提前唤醒前台读者）。
+		lease, _ := t.console.LendStdin()
+		if lease == nil {
+			lease = nullLease{}
+		}
+		defer lease.Release()
+	}
 	if interactive {
 		if lease, err := t.console.LendFull(&exec.Cmd{}, &stdout); err == nil && lease != nil {
 			ttyPump = startTTYRelay(lease, host)
