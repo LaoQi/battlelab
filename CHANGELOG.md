@@ -1,3 +1,33 @@
+## 2026-11-17 fix(tools/shell): 输出窗口切点对齐 UTF-8 边界，不再劈开多字节字符
+
+`streamCapture` 的头尾窗口按**字节**切，切点落在多字节字符中间就把一个汉字/emoji 劈成两半。
+`toUTF8` 只在**整体**非法时才走 `platform.DecodeOutput`，而 posix 的该函数是恒等函数（原样返回），
+于是半个字符直接进 tool 消息、进 history、进会话文件——`json.Marshal` 把非法字节替换成 U+FFFD，
+**静默数据损坏**（模型与 `/history` 都看到 `镜�` 这样的残缺文本，且无从判断是截断产物）。
+
+- **根因**（两处，都是字节硬切）：head 满 30000 字节时直接截断；tail 滚动时
+  `c.tail = c.tail[MaxOutput/2:]` 同样按字节切。
+- **修法**：新增 `runeBoundary`（返回尾部残缺序列的首字节下标，完整序列与非法输入都返回 `len(b)`）
+  与 `rollTail`（滚动切点从 `MaxOutput/2` 起在 3 字节窗口内对齐）。head 满额时尾部残缺序列
+  **整体移交给 tail 开头**——不丢字节、内容连续，`finish` 的 join 分支照样拼回完整流；
+  `middle` 按实际丢弃字节计数。**字节上限语义不变**（只挪切点、不改容量），
+  非法/二进制输入找不到序列首字节时退回硬切、保持旧行为。
+- **影响面**：四条执行路径共用 `streamCapture`（`runForeground`/`runFull`/vbash 会话宿主/interactive），
+  tanya 与 ivan 一并受益。
+- **实证**：修复前 `"a" + "中"*40000` 产出 `ä¸` 结尾的 head 与 `¸­` 开头的 tail，
+  `Tool.Invoke` 的 `res.Text` 非法、落盘含 U+FFFD；修复后 head/tail 均合法、`res.Text` 零 U+FFFD。
+  扫描本机 tanya 会话库，37 个会话文件含 U+FFFD、其中 24 处紧邻 CJK（`本节点只读镜�`、
+  `M11 上的临��`），与劈开汉字的形态吻合。
+- **测试**（`tools/shell/decode_test.go`）：`TestStreamCaptureSplitsOnRuneBoundary`（6 组：
+  1/2/3 字节前缀 + 中文、emoji、混合文本，跨 head 边界）、`TestStreamCaptureTailRollRuneBoundary`
+  （跨 tail 滚动边界）、`TestStreamCaptureKeepsByteLimit`（head 不超上限 + 字节记账平）、
+  `TestRuneBoundary`（8 组含残缺序列与全非法字节）。既有 `TestFinishDecodesDisjointFragments`
+  （全 `0x81` 非法流）与 `TestLimitedBuffer`（纯 ASCII）按设计不受影响、继续通过。
+- **验收**：`gofmt -l` 干净、`go build/vet ./...`、`go test ./...` 全绿、`make cross` OK、
+  `make vbash-check` 290/290；tanya 与 ivan 的 build/vet/test 全绿，tanya `make cross` OK、
+  渲染审计 17/17。
+- **未发版**（用户口径）：`go.mod` 版本号不动，下游按工作区联调生效。
+
 ## 2026-11-17 fix(tools/shell): 补非交互终端锚点、修 relay 收尾死锁与桥回显泄露
 
 会话宿主架构（fd2d757）落地后渲染审计留有三处红，逐一归因修复：

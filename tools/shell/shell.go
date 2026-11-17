@@ -230,6 +230,37 @@ type streamCapture struct {
 	sealed   bool
 }
 
+// runeBoundary 返回 b 尾部残缺多字节序列的首字节下标；b 尾部不是残缺序列时
+// 返回 len(b)。窗口切点只能落在这个下标上，否则会把一个汉字/emoji 劈成两半。
+// 尾部找不到序列首字节（二进制或已损坏的编码）时同样返回 len(b)：非法输入
+// 保持旧的硬切行为，本函数不替它猜边界。
+func runeBoundary(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-(utf8.UTFMax-1); i-- {
+		if !utf8.RuneStart(b[i]) {
+			continue
+		}
+		if r, size := utf8.DecodeRune(b[i:]); r == utf8.RuneError && size == 1 {
+			return i
+		}
+		return len(b)
+	}
+	return len(b)
+}
+
+// rollTail 在 tail 窗口满时丢弃前一半，返回实际丢弃的字节数。切点对齐 rune 边界
+// （残缺序列整段留在窗口内），字节上限语义不变——只挪切点、不改容量。
+func (c *streamCapture) rollTail() int {
+	cut := MaxOutput / 2
+	if seam := runeBoundary(c.tail[:cut]); seam < cut {
+		cut = seam
+	}
+	if cut <= 0 {
+		cut = MaxOutput / 2
+	}
+	c.tail = c.tail[cut:]
+	return cut
+}
+
 func (c *streamCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -248,12 +279,15 @@ func (c *streamCapture) Write(p []byte) (int, error) {
 			p = p[space:]
 			if len(c.head) == MaxOutput {
 				c.headDone = true
+				if seam := runeBoundary(c.head); seam < len(c.head) {
+					c.tail = append(c.tail, c.head[seam:]...)
+					c.head = c.head[:seam]
+				}
 			}
 			continue
 		}
 		if len(c.tail) == MaxOutput {
-			c.middle += MaxOutput / 2
-			c.tail = c.tail[MaxOutput/2:]
+			c.middle += int64(c.rollTail())
 		}
 		space := MaxOutput - len(c.tail)
 		if space > len(p) {

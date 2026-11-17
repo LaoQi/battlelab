@@ -147,7 +147,7 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 3. 工具清单**顺序与内容字节级不变**（改造验收口径：改造前后 wire 请求体一致即证明无行为变化；「运行期顺序稳定」是运行要求，与开发期改动无关，见 `docs/cache-probe.md`）
 4. 进程 cwd 不变（全程不 `os.Chdir`）；默认目录取当前工作区（`/switch` 后随工作区变），`cwd` 参数只设 `cmd.Dir`，且桥接与回退两条路径都设置
 5. bridge 未注入或 `Prepare` 失败 → 回退 foreground
-6. 输出头尾截断、超时（60/300/900）、`128 + signum`、中断与挂起标记语义不变
+6. 输出头尾截断、超时（60/300/900）、`128 + signum`、中断与挂起标记语义不变；**切点对齐 UTF-8 边界**（`runeBoundary`/`rollTail`，字节上限不变），不得按字节硬切劈开多字节字符
 
 ## 10. 测试策略
 
