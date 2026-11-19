@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "echo\n./bin/prog\nif\nfn1\nrc=1\n",
+ "timeout": false
+}

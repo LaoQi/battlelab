@@ -127,7 +127,8 @@
 | 组 | 命令 | 阶段 |
 |---|---|---|
 | 必有 | `cd` `pwd` `echo` `printf` `test` `[` `true` `false` `:` `exit` `return` `export` `unset` `set` `shift` `read` | P0/P1 |
-| 视需要 | `local` `declare` `readonly` `alias` `type` `command` `builtin` `umask` `hash` `times` `getopts` | P2 |
+| 视需要 | `local` `declare` `readonly` `alias` `type` `builtin` `umask` `hash` `times` `getopts` | P2 |
+| 已实现（原 P2） | `command`（`-p`/`-v`/`-V`/执行态，2026-11-19 按语料频次提前落地，见 `vbash-capability.md` §3.3） | — |
 
 `echo` 与 `printf` 的行为差异（`-n`/`-e`、`echo` 的平台相关行为）由内建统一实现，**这是跨平台一致性的直接收益**：`echo -e "a\tb"` 在三个平台产出相同字节。
 

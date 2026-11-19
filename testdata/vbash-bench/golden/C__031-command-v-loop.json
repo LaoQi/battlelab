@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "",
+ "stdout": "alpha    ./bin/alpha\nbeta     ./bin/beta\ngamma    ./bin/gamma\n",
+ "timeout": false
+}

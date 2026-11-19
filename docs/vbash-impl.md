@@ -3,6 +3,38 @@
 > 配套 `docs/vbash-plan.md`（范围与决策）。本文只记**实施过程中的偏差与自定决策**，
 > 按阶段（S1…S8）分节，每节记录：做了什么、与规划不一致处、为什么。
 
+## S9 `command` 内建（2026-11-19，原属 P2 视需要项，按语料频次提前落地）
+
+### 产出
+
+| 文件 | 内容 |
+|---|---|
+| `vbash/builtin_command.go` | `builtinCommand`：选项解析、`-v`/`-V` 渲染、`commandPathLookup`（bash 兼容查找）、`commandExecute`（跳过函数） |
+| `vbash/builtin.go` | `init()` 里注册 `builtins["command"]`（不写字面量，防初始化环） |
+| `vbash/builtin_command_test.go` | 13 例：查找顺序、miss 语义、PATH 形态、选项、执行态、`-p` |
+| `vbash/builtin_command_windows_test.go` | windows 专属：`.cmd`/`.bat` 后缀语义与「自带后缀不重复补」 |
+| `testdata/vbash-bench/cases/C-corpus.case` | `C/031`–`C/036` 六条（其中 `C/036` 为 `optional`） |
+
+### 与规划的偏差与自定决策
+
+| # | 情况 | 处理 | 理由 |
+|---|---|---|---|
+| S9-1 | 规划把 `command` 列为 P2「视需要」 | 提前实现（`-p`/`-v`/`-V`/执行态全套） | 语料 `command -v` 27 次 + `-V` 3 次，且工具结果里 `command: command not found` 70 次——是「偶发但结果明确错误」的摩擦，非性能问题 |
+| S9-2 | `builtins` 字面量注册会形成初始化环 | 改 `init()` 注册 | 编译期实测报 `initialization cycle for builtins`：`builtins → builtinCommand → canBuiltin → builtins` |
+| S9-3 | 既有 `lookPath` 不可复用 | 另写 `commandPathLookup` | 三处语义不同（非可执行也算命中、路径不 clean、且 `lookPath` 在注入 `Handler` 时直接短路返回原名字——生产路径正是这种形态，复用会永远报「找到了」） |
+| S9-4 | bash 的 `command -v` 读 hash 表，会报陈旧路径 | 不复刻，每次新鲜查找 | 实现细节而非契约；复刻会把「程序删了还报旧路径」这个 bug 一起复制进来 |
+| S9-5 | `-V` 查函数时 bash 连带打印函数体 | 只打 `f is a function` | `FuncDef` 只存 AST 不存源码，做打印需 AST pretty-printer；语料 `-V` 共 3 次且都不查函数 |
+| S9-6 | `command -p` 的默认 PATH 与 bash 不同 | 用既有 `plat.DefaultPath` | bash 读 `getconf PATH`（本机 `/bin:/usr/bin`），`plat.DefaultPath` 是 `/usr/local/bin:/usr/bin:/bin`。改平台常量会波及既有 `lookPath` 的语义，不在本步范围；差异记入 capability §3.3 |
+| S9-7 | 基准 C/034 原含外部程序的 `-V` | 收敛为「内建/关键字/miss」三类 | `-V` 对 PATH 命中会打印沙箱绝对路径，`mkdtemp` 每次不同，golden 不可复现；绝对化形态改由单测逐形态断言 |
+| S9-8 | `command -v` 无名字时 bash 返回 0 | 对齐（初版误返回 1，已修） | 实测 `command -v` / `-V` / `-v --` 无参均 rc=0 且无输出 |
+
+### 验收
+
+- `gofmt -l` 干净；`go build/vet ./...`、`go test ./...` 全绿
+- `make cross` OK（darwin/windows 的 vet 与逐包测试编译）
+- `make vbash-check` 295/295、`make vbash-self` 295/295
+- 与真 bash 5.3 的 36 例差分（`LC_ALL=C`）：仅剩 capability §3.3 所记 4 条已知差异
+
 ## S8 接入 tools/shell（2026-11-04）
 
 ### 产出

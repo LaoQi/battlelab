@@ -217,3 +217,56 @@ command:
 setup: |
   mkdir -p d/x
   printf '1\n' > d/x/a.txt
+--- name: C/031-command-v-loop
+# 语料最高频用法（27 次里的主流形态）：批量探测工具是否安装。
+# 全部命中，用来锁住「输出顺序 + 逐行形态 + 中间不夹杂项」。
+command:
+  for t in alpha beta gamma; do printf '%-8s %s\n' "$t" "$(command -v $t || echo MISSING)"; done
+setup: |
+  mkdir -p bin
+  for t in alpha beta gamma; do printf '#!/bin/sh\ntrue\n' > bin/$t; chmod +x bin/$t; done
+env: {"PATH": "./bin:/usr/bin:/bin"}
+
+--- name: C/032-command-v-probe-missing
+# 混合命中与 miss：miss 必须静默（不写 stderr）且 `|| echo MISSING` 能接到 1。
+command:
+  command -v alpha; command -v nosuchtool; command -v beta
+setup: |
+  mkdir -p bin
+  for t in alpha beta; do printf '#!/bin/sh\ntrue\n' > bin/$t; chmod +x bin/$t; done
+env: {"PATH": "./bin:/usr/bin:/bin"}
+
+--- name: C/033-command-v-builtin-and-external
+# 同一条命令里混合内建 / 外部 / 关键字 / 函数 / miss 五种形态，锁住查找顺序。
+# 外部程序用沙箱自造的 `prog`，路径由 PATH 决定、不随宿主 /usr/bin 与 /bin 的布局漂移。
+command:
+  fn1() { :; }
+  command -v echo; command -v prog; command -v if; command -v fn1; command -v nosuchtool; echo "rc=$?"
+setup: |
+  mkdir -p bin
+  printf '#!/bin/sh\ntrue\n' > bin/prog; chmod +x bin/prog
+env: {"PATH": "./bin:/usr/bin:/bin"}
+
+--- name: C/034-command-V-forms
+# -V 对「内建 / 关键字 / miss」三类文本形态（这三类不带沙箱路径，golden 可复现）。
+# 外部程序的 -V 会打印沙箱绝对路径（每次 mkdtemp 不同），不进基准，改由单测覆盖
+# （builtin_command_test.go 的 TestCommandPathLookupRelativeForms 逐形态断言）。
+# 函数形态单列在 C/036：bash 会连带打印函数体，vbash 只报名字（已知差异，不做）。
+command:
+  command -V echo; command -V if; command -V nosuchtool; echo "rc=$?"
+
+--- name: C/036-command-V-function
+# 已知差异：bash 的 `command -V f` 除 "f is a function" 外还格式化打印函数体；
+# vbash 只报名字（FuncDef 只存 AST 不存源码，做函数体打印需要 AST pretty-printer，
+# 成本远超收益，见 docs/vbash-capability.md §3.3）。故只校验不崩、退出码合理。
+command:
+  fn2() { :; }
+  command -V fn2; echo "rc=$?"
+optional: true
+
+--- name: C/035-command-skip-function
+# 执行态：`command NAME` 跳过函数查找直取外部程序；同名函数只在直接调用时生效。
+command:
+  cat() { echo SHADOWED; }
+  cat /dev/null
+  command cat /dev/null; echo "rc=$?"

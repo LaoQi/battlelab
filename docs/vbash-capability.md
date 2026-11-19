@@ -67,7 +67,7 @@ tool, err := shell.New(shell.Config{
 | **分词与 glob** | 未引用展开按 IFS 切分、双引号不切、`"$@"` 逐元素保形、空引号参数保留（`f ""` 传 1 个空串）、glob `* ? [...]`（无匹配保字面、不匹配隐藏文件） |
 | **`~` 展开** | `~` → `$HOME`、`~/x` |
 | **大括号展开** | `{a,b}`（可嵌套、可与前后缀拼接、可连写做笛卡尔积）、`{1..3}`/`{3..1}`/`{01..03}`/`{1..10..3}`、`{a..e..2}`、字母与负数范围；引号内与 `\{` 转义不展开 |
-| **内建命令** | `: true false echo printf cd pwd export unset set shift exit return read wait local break continue test [ kill`（共 22 个，含 `[`） |
+| **内建命令** | `: true false echo printf cd pwd export unset set shift exit return read wait local break continue test [ kill command`（共 23 个，含 `[`） |
 | **`exec`** | `exec >f 2>&1`（无命令，**重定向持久生效**到脚本结束）、`exec <cmd> [args]`（执行该命令后不再继续，退出码取该命令）、裸 `exec` 无副作用；`-c`/`-l`/`-a name` 前缀被接受但语义简化 |
 | **`test`/`[`** | 一元 `-z -n -e -a -f -d -s -r -w -x -L -h`、二元 `= == != < > -eq -ne -lt -le -gt -ge`、`!` 取反；整数比较接受前导 `+`/`-`，**按十进制**解释（`010`=10，`0x10` 报错），非数值诊断 `[: abc: integer expected` |
 | **`printf`** | `%s %c %b %q %d %i %u %o %x %X %f %F %e %E %g %G`、宽度/左对齐/零填充/`+`/` `(空格)/`#`、精度（字符串截断、整数补零、浮点小数位）、格式复用、`-v var`（写变量而非输出，坏标识符按 bash 报 `not a valid identifier`）、`\n \t \r \\ \" \a \b \f \v \e \0NNN \xHH`；无效数字按 bash 打诊断并置退出码 1 |
@@ -92,7 +92,7 @@ tool, err := shell.New(shell.Config{
 | `select` / `coproc` / `time` / `function` 关键字 | `UnsupportedError` |
 | 数组 `a=(1 2)`、`${a[1]}` | 语法错误 / bad substitution |
 | 嵌套超过 64 层（`$()` / `${}` / `$(( ))`） | `SyntaxError`，退出码 2（保护宿主不被撑爆内存） |
-| 别名 `alias`、`source`/`.`、`eval`、`declare`、`type`、`command`、`trap`、`ulimit`、`umask`、`getopts`、`mapfile`、`jobs`/`fg`/`bg`/`disown` | 按普通命令处理 → `command not found`（退出码 127） |
+| 别名 `alias`、`source`/`.`、`eval`、`declare`、`type`、`trap`、`ulimit`、`umask`、`getopts`、`mapfile`、`jobs`/`fg`/`bg`/`disown` | 按普通命令处理 → `command not found`（退出码 127） |
 
 ### 3.3 与真 bash 的已知差异（不报错，但结果不同）
 
@@ -117,6 +117,10 @@ tool, err := shell.New(shell.Config{
 | 主动 `setsid` 逃逸 | **允许逃逸**，围栏收割时放行（设计取舍，见 §4） | 无此概念 |
 | 外部命令的 fd 3+ | 不支持：`3>f`/`3>&1` 只对**内建**生效，透传给外部程序时不成立（`sh -c 'echo x >&3' 3>f` 会失败）。首次遇到会打一条 `fd N: not passed to external commands` 提示，避免静默误判 | 支持 |
 | 已关闭的 stdin 传给外部程序 | `exec 0<&-` 后外部程序读到的是空输入（EOF）而非 `Bad file descriptor` | 子进程继承到已关闭 fd 0，读即报错 |
+| `command -V` 查函数 | 只报 `f is a function` | 除该行外还格式化打印函数体（`FuncDef` 只存 AST 不存源码，做函数体打印需 AST pretty-printer，收益不足；`-v` 两家一致） |
+| `command -V`/`-v` 的 PATH 命中路径 | 每次都新鲜查找 | 读 shell 的 hash 表：程序被删/移走后仍报**陈旧**路径直到 `hash -r`（vbash 不复刻这个实现细节） |
+| `command -p` 用的默认 PATH | `plat.DefaultPath`（posix 为 `/usr/local/bin:/usr/bin:/bin`） | 读 `getconf PATH`（本机为 `/bin:/usr/bin`），故同一程序可能解析出不同绝对路径 |
+| `command -v` 的 shell 名前缀诊断 | `<ShellName>: line N: command: X: not found` | 前缀为调用时的 `$0`，两者形态可能不同（`/bin/bash` vs `bash`） |
 
 ### 3.3.1 heredoc 体内 `$*` 与 `$@` 同现
 

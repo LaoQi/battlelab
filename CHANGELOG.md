@@ -1,3 +1,45 @@
+## 2026-11-19 feat(vbash): 新增 `command` 内建（`-p`/`-v`/`-V`/执行态）
+
+语料里 `command -v` 27 次、`command -V` 3 次，工具结果中 `command: command not found` 出现 70 次
+（用法高度集中在「批量探测工具是否安装」：`for t in ...; do command -v $t || echo MISSING; done`）。
+此前 `command` 在 §3.2 的「不支持」清单里按普通命令处理，模型因此拿到语义错误的 127。
+
+- **实现**（`vbash/builtin_command.go`）：`builtinCommand` 解析 `[-p] [-v|-V] [--] [name ...]`，
+  选项在第一个非选项参数处终止（`command echo -v` 里 `-v` 是 echo 的参数）；`-v`/`-V` 同时给出时
+  **后出现者生效**；非法选项打 `command: -X: invalid option` + usage 到 stderr、退出码 2
+  （`--xxx` 按 bash 口径报 `--`）。查找顺序 **关键字 → 函数 → 内建 → 含 `/` 直接查该路径 → PATH 逐条目**。
+- **PATH 查找**（`commandPathLookup`）与既有 `lookPath` 有三处**刻意不同**，都是 bash 语义：
+  ①只跳过目录、**非可执行文件也算命中**（先找可执行的，全都不行才回落到第一个非目录文件）；
+  ②拼出的路径**不 clean**（`sub//`、`sub/./` 原样保留，`-V` 只额外削掉开头一个 `./`）；
+  ③**不看 `r.Exec`** —— 生产环境注入 `Handler` 后 `lookPath` 会直接短路返回原名字，用它会永远报「找到了」。
+- **不复刻 bash 的 hash 表**：bash 的 `command -v` 会返回陈旧缓存路径（程序删掉后仍报旧路径），
+  那是实现细节不是契约；vbash 每次新鲜查找。`-p` 用 `plat.DefaultPath` 且**不改子进程 `PATH`**。
+- **`-V` 函数体打印明确不做**：`FuncDef` 只存 AST 不存源码，做函数体打印需要 AST pretty-printer，
+  语料里 `-V` 共 3 次且都不是查函数，收益不足。只打 `f is a function`。
+- **注册方式**：经 `init()` 而非 `builtins` 字面量——实现要查内建表（`-v` 要回答 `is a shell builtin`），
+  直接进字面量会形成初始化环（`builtins → builtinCommand → canBuiltin → builtins`）。
+- **测试**：`vbash/builtin_command_test.go` 14 例（查找顺序含「函数优先于内建」、`-v` miss 静默、`-V` miss 诊断、
+  任一命中即 0、无参即 0、PATH 相对形态 5 组、目录不算命中、优先可执行、回落非可执行、
+  空条目等价 `.`、含 `/` 参数需可执行、选项簇与 `--`、非法选项、执行态跳过函数、`-p` 不漏 PATH、
+  `-p` 改用默认 PATH、`-p` 执行态不回落）；`tools/shell/vbash_test.go` 新增 2 例
+  （装 `Handler` 的生产路径下 `command -v` 仍正确 miss、工具描述不再把 `command` 列为不支持）；`vbash/builtin_command_windows_test.go`（windows 专属：`.cmd`/`.bat` 后缀语义）。
+- **基准**（`testdata/vbash-bench/cases/C-corpus.case` 新增 6 条）：`C/031` 批量探测循环（语料最高频形态）、
+  `C/032` 混合命中与 miss、`C/033` 五种形态锁查找顺序、`C/034` `-V` 文本形态、`C/035` 执行态跳函数、
+  `C/036` `-V` 函数体（`optional`，已裁定的已知差异）。**总用例 295 条**，
+  `make vbash-self` 与 `make vbash-check` 均 100%。
+- **顺带修掉一处真 bug**（单测发现）：`command -p NAME` 执行态在默认 PATH 解析失败后会**回落到自定义
+  PATH** 把命令跑起来。bash 实测是不回落的（`PATH=/tmp/pt:$PATH; command -p ptool` 在 ptool 只存在于
+  `/tmp/pt` 时报 `command not found`、退出码 127）。改为解析不到即 127 + `X: command not found`。
+- **变异复验 7 处**，其中 6 处准确变红（短路 `Handler`、非可执行不算命中、优先可执行改先到先得、
+  不削 `./` 前缀、`-p` 不改用默认 PATH、`-p` 执行态回落）；1 处（内建优先于函数）初版**未变红**，
+  补「函数与内建同名」用例后变红——`echo(){ :; }; command -V echo` 在 bash 里报 `is a function`。
+- **逐条对照真 bash 5.3 实测**（`LC_ALL=C` 差分 36 例）：除 §3.3 记的 4 条已知差异外全部逐字节一致。
+- **验收**：`gofmt -l` 干净、`go build/vet ./...`、`go test ./...` 全绿、`make cross` OK、
+  `make vbash-check` 295/295、`make vbash-self` 295/295。
+- **文档**：`docs/vbash-capability.md`（§3.1 内建 22→23、§3.2 移除 `command`、§3.3 补 4 条差异）、
+  `docs/vbash-plan.md` §4（`command` 由 P2 转「已实现」）。
+- **未发版**（用户口径）：`go.mod` 版本号不动，下游按工作区联调生效。
+
 ## 2026-11-17 fix(tools/shell): 输出窗口切点对齐 UTF-8 边界，不再劈开多字节字符
 
 `streamCapture` 的头尾窗口按**字节**切，切点落在多字节字符中间就把一个汉字/emoji 劈成两半。

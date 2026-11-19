@@ -34,6 +34,12 @@ var builtins = map[string]builtinFunc{
 	"[":        builtinTest,
 }
 
+// command 内建经 init 注册：它的实现要查内建表（-v 要回答 "is a shell builtin"），
+// 直接在 builtins 字面量里引用会形成初始化环（builtins → builtinCommand → canBuiltin → builtins）。
+func init() {
+	builtins["command"] = builtinCommand
+}
+
 func canBuiltin(name string) bool {
 	_, ok := builtins[name]
 	return ok

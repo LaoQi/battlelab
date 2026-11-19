@@ -1,0 +1,7 @@
+{
+ "exit": 0,
+ "files": [],
+ "stderr": "/bin/bash: line 1: command: nosuchtool: not found\n",
+ "stdout": "echo is a shell builtin\nif is a shell keyword\nrc=1\n",
+ "timeout": false
+}

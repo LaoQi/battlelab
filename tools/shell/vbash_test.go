@@ -330,3 +330,37 @@ func TestResolveBuiltinIgnoresLookPath(t *testing.T) {
 		t.Error("解析内置解释器不应查 PATH")
 	}
 }
+
+// TestVbashCommandBuiltinWithHandler 锁住生产路径的关键点：tanya 装配 vbash 时会注入
+// Console.Handler（tools/shell/vbash.go 的 t.hostHandler），此时解释器的 resolveExternal/
+// lookPath 都会短路返回原名字。`command -v` 必须绕开这条路自己做查找，否则会永远报"找到了"。
+func TestVbashCommandBuiltinWithHandler(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX 用例：断言的是 /usr/bin 这类路径形态")
+	}
+	tool := testVbashTool(t)
+	res := tool.run(context.Background(), request{
+		Command:    `command -v echo; command -v nosuchtool-xyz; echo "rc=$?"`,
+		TimeoutSec: 10,
+	})
+	got := res.String()
+	// 内建 echo 应被识别为内建（-v 只回名字）
+	if !strings.Contains(got, "echo") {
+		t.Errorf("`command -v echo` 应命中内建，实际 %q", got)
+	}
+	// miss 必须真的 miss（Handler 短路会把它误判成命中并打印名字）
+	if strings.Contains(got, "nosuchtool-xyz") {
+		t.Errorf("`command -v nosuchtool-xyz` 不应命中（Handler 短路会让它误判命中），实际 %q", got)
+	}
+	if !strings.Contains(got, "rc=1") {
+		t.Errorf("全 miss 时退出码应为 1，实际 %q", got)
+	}
+}
+
+// TestVbashCommandVBashDescMentionsCommand 确认工具描述里 command 不再落在"不支持"口径。
+func TestVbashCommandNotInUnsupportedList(t *testing.T) {
+	desc := testVbashTool(t).toolDesc()
+	if strings.Contains(desc, "command/") || strings.Contains(desc, "`command`") {
+		t.Errorf("command 已实现，不应出现在不支持清单里: %q", desc)
+	}
+}
