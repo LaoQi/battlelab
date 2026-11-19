@@ -38,6 +38,10 @@ const (
 	hostReadyTimeout = 2 * time.Second
 	// hostOutChunk 是输出切块大小：宿主按块发送，父进程边收边写，避免大输出攒在内存。
 	hostOutChunk = 4096
+	// hostStderrLimit 是宿主 stderr 的留存上限（只留尾部，用于失败诊断）。
+	hostStderrLimit = 4096
+	// hostExitWait 是握手失败后等宿主进程收尾的时长：只为把它的 stderr 收全。
+	hostExitWait = 500 * time.Millisecond
 )
 
 // IsSessionHost 报告当前进程是否应作为会话宿主运行（由父进程自举时置位）。
@@ -155,11 +159,14 @@ func startSessionHost() (*sessionHost, error) {
 		reqW.Close()
 		return nil, err
 	}
+	// 宿主的 stderr 必须留下：宿主起步就失败（自举前 panic、子进程起不来）时，
+	// 原因只在这条流上。丢了它，父进程只剩「握手超时」，同类问题永远只能翻代码。
+	hostErr := &tailBuffer{max: hostStderrLimit}
 	cmd := exec.Command(exe)
 	cmd.Env = append(os.Environ(), hostEnvVar+"=1")
 	cmd.Stdin = reqR
 	cmd.Stdout = resW
-	cmd.Stderr = nil
+	cmd.Stderr = hostErr
 	// 宿主自己不接管终端：它内部再为命令分配（POSIX 虚拟 pty / Windows 进程组）。
 	if err := cmd.Start(); err != nil {
 		reqR.Close()
@@ -185,7 +192,9 @@ func startSessionHost() (*sessionHost, error) {
 		reqW.Close()
 		resR.Close()
 		_ = cmd.Process.Kill()
-		return nil, errHostUnavailable
+		// 暂等下 Wait 收尾：宿主刚被杀，它的 stderr 可能还在管道里。
+		waitHostExit(cmd)
+		return nil, hostErrorMessage(hostErr)
 	}
 	_ = resR.SetReadDeadline(time.Time{})
 
@@ -292,10 +301,10 @@ func (h *sessionHost) run(ctx context.Context, req reqPayload, in *vbash.IO) (in
 	case <-time.After(hostReadyTimeout):
 		return 1, errHostUnavailable
 	}
-	if pgid <= 0 {
-		return 1, errHostUnavailable
-	}
-	if ctx != nil && ctx.Done() != nil {
+	// pgid ≤ 0 是**命令自身启动失败**（cwd 不存在、路径不可 exec）：宿主已把诊断
+	// 写进 stderr、退出码 127。这里不能报「宿主不可用」——宿主活得好好的，
+	// 报错就会把「命令起不来」误导成「宿主没自举」。
+	if pgid > 0 && ctx != nil && ctx.Done() != nil {
 		stop := make(chan struct{})
 		defer close(stop)
 		go func() {
@@ -503,3 +512,54 @@ func (fr *frameReader) next() (frame, error) { return readFrame(fr.r) }
 
 // hostUnavailableMsg 用于诊断。
 func hostUnavailableMsg() string { return fmt.Sprintf("%v", errHostUnavailable) }
+
+// tailBuffer 是只保留尾部 max 字节的 io.Writer（宿主 stderr 用）。
+type tailBuffer struct {
+	mu   sync.Mutex
+	max  int
+	tail []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := len(p)
+	b.tail = append(b.tail, p...)
+	if len(b.tail) > b.max {
+		b.tail = append(b.tail[:0], b.tail[len(b.tail)-b.max:]...)
+	}
+	return n, nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.TrimSpace(string(b.tail))
+}
+
+// waitHostExit 尽力等宿主进程收尾（只为把它的 stderr 收全），拿不到就放弃。
+func waitHostExit(cmd *exec.Cmd) {
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(hostExitWait):
+	}
+}
+
+// hostErrorMessage 把宿主 stderr 的尾巴附到 errHostUnavailable 上。
+//
+// 用 %w 保持 errors.Is(err, errHostUnavailable) 成立——调用方据此区分
+// 「宿主没起来」与其他失败；诊断只作为附加信息。
+func hostErrorMessage(buf *tailBuffer) error {
+	if buf == nil {
+		return errHostUnavailable
+	}
+	if msg := buf.String(); msg != "" {
+		return fmt.Errorf("%w: %s", errHostUnavailable, msg)
+	}
+	return errHostUnavailable
+}

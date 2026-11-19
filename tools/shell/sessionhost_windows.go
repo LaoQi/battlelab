@@ -29,7 +29,9 @@ func (hp *hostPlatform) exec(id uint32, req reqPayload, j *hostJob, out *frameWr
 	if len(req.argv) == 0 {
 		return 0
 	}
-	cmd := exec.Command(req.argv[0], req.argv[1:]...)
+	// 只 exec 解释器解析好的路径，不查 PATH：宿主的进程环境与解释器的 `$PATH` 无关。
+	cmd := exec.Command(req.path, req.argv[1:]...)
+	cmd.Args[0] = req.argv[0]
 	cmd.Dir = req.cwd
 	if len(req.env) > 0 {
 		cmd.Env = req.env
@@ -52,6 +54,10 @@ func (hp *hostPlatform) exec(id uint32, req reqPayload, j *hostJob, out *frameWr
 	cmd.Stderr = &frameSink{out: out, job: id, fd: 2}
 	if err := cmd.Start(); err != nil {
 		inR.Close()
+		// 启动失败（cwd 不存在、路径不可 exec 等）：诊断写回 stderr，pgid 报 0。
+		// 不报 0 的话父进程只能等满握手超时，把「命令起不来」误报成「宿主不可用」。
+		_ = out.write(frameData, id, append([]byte{2}, err.Error()+"\n"...))
+		_ = out.write(frameStart, id, putU32(0))
 		return 127
 	}
 	inR.Close()

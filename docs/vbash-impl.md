@@ -21,7 +21,7 @@
 |---|---|---|---|
 | S9-1 | 规划把 `command` 列为 P2「视需要」 | 提前实现（`-p`/`-v`/`-V`/执行态全套） | 语料 `command -v` 27 次 + `-V` 3 次，且工具结果里 `command: command not found` 70 次——是「偶发但结果明确错误」的摩擦，非性能问题 |
 | S9-2 | `builtins` 字面量注册会形成初始化环 | 改 `init()` 注册 | 编译期实测报 `initialization cycle for builtins`：`builtins → builtinCommand → canBuiltin → builtins` |
-| S9-3 | 既有 `lookPath` 不可复用 | 另写 `commandPathLookup` | 三处语义不同（非可执行也算命中、路径不 clean、且 `lookPath` 在注入 `Handler` 时直接短路返回原名字——生产路径正是这种形态，复用会永远报「找到了」） |
+| S9-3 | 既有 `lookPath` 不可复用 | 另写 `commandPathLookup` | 语义不同：非可执行也算命中、路径不 clean。（初版还有第三条理由是「`lookPath` 在注入 `Handler` 时直接短路返回原名字」，该短路已随 `Handler` 契约改为「交已解析路径」而删除，见 `CHANGELOG` 2026-11-19 的宿主路径形态条目） |
 | S9-4 | bash 的 `command -v` 读 hash 表，会报陈旧路径 | 不复刻，每次新鲜查找 | 实现细节而非契约；复刻会把「程序删了还报旧路径」这个 bug 一起复制进来 |
 | S9-5 | `-V` 查函数时 bash 连带打印函数体 | 只打 `f is a function` | `FuncDef` 只存 AST 不存源码，做打印需 AST pretty-printer；语料 `-V` 共 3 次且都不查函数 |
 | S9-6 | `command -p` 的默认 PATH 与 bash 不同 | 用既有 `plat.DefaultPath` | bash 读 `getconf PATH`（本机 `/bin:/usr/bin`），`plat.DefaultPath` 是 `/usr/local/bin:/usr/bin:/bin`。改平台常量会波及既有 `lookPath` 的语义，不在本步范围；差异记入 capability §3.3 |

@@ -19,10 +19,12 @@ func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
 	return r.spawn(full, argv, io, pos)
 }
 
+// resolveExternal 解析外部命令，返回**宿主形态**的路径（绝对路径或原样的裸名字）。
+//
+// 注入 Handler 时**照样解析**：Handler 可能是另一个进程（会话宿主），它有自己的
+// 环境变量与工作目录，`exec.Command` 的 PATH 查找读的是它自己的进程环境，与解释器
+// 的 `$PATH`、`cd` 全无关系。把解析结果交给它，才与真实 shell 语义一致。
 func (r *Runner) resolveExternal(name string, io *IO, pos Pos) (string, int, bool) {
-	if r.Exec != nil {
-		return name, 0, true
-	}
 	if isPathLike(name) {
 		host := r.hostPath(name)
 		st, err := os.Stat(host)
@@ -55,9 +57,6 @@ func (r *Runner) resolveExternal(name string, io *IO, pos Pos) (string, int, boo
 }
 
 func (r *Runner) lookPath(name string) (string, error) {
-	if r.Exec != nil {
-		return name, nil
-	}
 	if isPathLike(name) {
 		host := r.hostPath(name)
 		st, err := os.Stat(host)
@@ -105,7 +104,7 @@ func hasAnySuffix(name string, suffixes []string) bool {
 
 func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error) {
 	if r.Exec != nil {
-		code, err := r.Exec(r.Ctx, r, argv, io)
+		code, err := r.Exec(r.Ctx, r, full, argv, io)
 		if err != nil {
 			return code, err
 		}
@@ -152,7 +151,7 @@ func (r *Runner) spawn(full string, argv []string, io *IO, pos Pos) (int, error)
 func (r *Runner) newCmd(ctx context.Context, full string, argv []string, io *IO) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, full, argv[1:]...)
 	cmd.Args[0] = plat.Argv0(argv[0])
-	cmd.Dir = r.hostDir()
+	cmd.Dir = r.HostDir()
 	cmd.Env = r.Env.Environ()
 	cmd.Stdin = io.In
 	cmd.Stdout = io.Out

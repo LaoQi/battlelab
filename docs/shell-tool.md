@@ -271,8 +271,21 @@ socketpair、`ExtraFiles` 或 `/proc/<ppid>/fd`——这三样在 Windows 上都
 
 - **自举与就绪握手**：宿主经环境变量置位后走 `runSessionHost`，进循环前回一个就绪字节；
   未接自举的可执行文件在 2s 内**明确失败**（`会话宿主不可用` → 报
-  `无法借出终端`），不挂死。库自身的测试二进制经 `TestMain` 接线
-  （`tools/main_linux_test.go` 与 `tools/shell/main_linux_test.go`）。
+  `无法借出终端`），不挂死。宿主的 stderr 收进 4 KiB 环形缓冲，握手失败时作为附加
+  信息拼进错误（`errors.Is(err, errHostUnavailable)` 仍成立），否则诊断全丢。
+  库自身的测试二进制经 `TestMain` 接线（`tools/main_test.go` 与 `tools/shell/main_test.go`，
+  **不带平台 tag**——宿主机制在三个平台都启用）。
+- **协议里的路径一律宿主形态**（2026-11-19 修）：`reqPayload.path` 是解释器已解析好的
+  可执行文件宿主路径、`reqPayload.cwd` 是 `Runner.HostDir()` 的宿主形态。宿主拿到就
+  `exec` 并把 `cmd.Dir` 设成它，**不做任何 PATH 查找与形态转换**——宿主的进程环境与
+  解释器的 `$PATH`、`cd` 全无关系，让它自己查会得出另一个结果
+  （`PATH=/tmp/x:$PATH; tool` 在这种写法下失效）。
+  `argv` 保持用户原文，只把 `cmd.Args[0]` 设回它，子进程的 `$0` 才与 bash 一致。
+  注意这是**子进程的 cwd**（`cmd.Dir`），与 §9 不变量 4「进程 cwd 不变（全程不 `os.Chdir`）」
+  不冲突：宿主不调 `os.Chdir`，它只是把协议里的目录交给 `exec`。
+- **命令起不来 ≠ 宿主不可用**（2026-11-19 修）：宿主对 `cmd.Start()` 失败回报
+  `frameStart` 的 pgid=0 并把 `err` 写进 stderr，父进程据此直接取退出码 127，
+  不再等满 2s 握手超时后误报「会话宿主不可用」。
 - **stdio 三种形态如实搬运**：管道读端（`a | b` 的 b 段）、命令替换的内存 buffer、重定向文件，
   由父进程读出经 `frameIn` 灌进宿主为该命令建的管道；未重定向的 stdin 直接接虚拟 tty
   （`tty`/`test -t 0` 与真实 shell 一致，`emptyStdin()` 是「未接输入」的哨兵类型）。
@@ -322,3 +335,5 @@ func main() {
 
 漏接的症状是**所有外部命令**失败（`无法借出终端`）——普通与 interactive 的外部命令都由宿主
 承载，只有解释器内建（`echo`/`printf` 等）不受影响；宿主侧有 2s 就绪超时，不会静默挂死。
+测试二进制漏接则更糟：`os.Executable()` 自举的是它自己，子进程会去**再跑一遍测试**而不是进
+宿主循环，表现为递归自举 + 握手超时（`tools/shell` 上曾表现为 600s panic 超时）。

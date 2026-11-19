@@ -147,7 +147,8 @@ func (r *Runner) commandLookup(name string, usePath bool) (commandHit, bool) {
 //  1. 只跳过目录，**非可执行文件也算命中**（先找可执行，全都没有可执行时才回落到
 //     第一个非目录文件）；
 //  2. 拼出的路径**不 clean**（`sub//`、`sub/./` 原样保留），因为 -v 要回显这个形态；
-//  3. 不看 r.Exec —— 生产环境注入了 Handler，lookPath 会直接短路返回原名字。
+//  3. 命中的判定口径独立于 `lookPath`：后者对「带 `/` 的参数」走 `hostPath` 且要求
+//     `IsExec`，而 `-v` 要看的是「PATH 里有没有这个名字」的 bash 口径。
 func (r *Runner) commandPathLookup(name string, usePath bool) (commandHit, bool) {
 	pathVar, ok := r.Env.Lookup("PATH")
 	if usePath || !ok {

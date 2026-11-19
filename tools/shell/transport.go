@@ -146,7 +146,14 @@ func decodeStrings(p []byte) ([]string, bool) {
 }
 
 // reqPayload 是一条命令请求的完整内容。
+//
+// 路径一律**宿主形态**（`C:\...` / `/home/...`）：解释器侧用 FromHost/ToHost
+// 归一后再进协议，宿主因此不需要任何路径形态知识，`exec.Cmd.Dir` 直接可用。
 type reqPayload struct {
+	// path 是解释器解析好的可执行文件宿主路径：绝对路径，或（PATH 里若有相对
+	// 条目）相对宿主 cwd 的形态。宿主直接 exec 它，不做 PATH 查找——宿主的进程
+	// 环境与解释器的 `$PATH`、`cd` 无关，查了就是另一个结果。
+	path  string
 	argv  []string
 	cwd   string
 	env   []string
@@ -156,9 +163,10 @@ type reqPayload struct {
 	stdinTTY bool
 }
 
-// encodeReq 编码请求帧 payload：argv 列表 + cwd + env 列表 + 前台标记。
+// encodeReq 编码请求帧 payload：可执行路径 + argv + cwd + env + 标记位。
 func encodeReq(r reqPayload) []byte {
-	out := encodeStrings(r.argv)
+	out := encodeStrings([]string{r.path})
+	out = append(out, encodeStrings(r.argv)...)
 	out = append(out, encodeStrings([]string{r.cwd})...)
 	out = append(out, encodeStrings(r.env)...)
 	var flags byte
@@ -174,11 +182,16 @@ func encodeReq(r reqPayload) []byte {
 
 // decodeReq 还原请求帧 payload。
 func decodeReq(p []byte) (reqPayload, bool) {
-	argv, ok := decodeStrings(p)
+	pathList, ok := decodeStrings(p)
 	if !ok {
 		return reqPayload{}, false
 	}
-	rest := p[len(encodeStrings(argv)):]
+	rest := p[len(encodeStrings(pathList)):]
+	argv, ok := decodeStrings(rest)
+	if !ok {
+		return reqPayload{}, false
+	}
+	rest = rest[len(encodeStrings(argv)):]
 	cwdList, ok := decodeStrings(rest)
 	if !ok {
 		return reqPayload{}, false
@@ -196,5 +209,9 @@ func decodeReq(p []byte) (reqPayload, bool) {
 	if len(cwdList) > 0 {
 		cwd = cwdList[0]
 	}
-	return reqPayload{argv: argv, cwd: cwd, env: env, front: rest[0]&1 != 0, stdinTTY: rest[0]&2 != 0}, true
+	path := ""
+	if len(pathList) > 0 {
+		path = pathList[0]
+	}
+	return reqPayload{path: path, argv: argv, cwd: cwd, env: env, front: rest[0]&1 != 0, stdinTTY: rest[0]&2 != 0}, true
 }

@@ -1,3 +1,59 @@
+## 2026-11-19 fix(tools/shell)!: 宿主协议改为传递宿主形态路径，外部命令在 Windows 上恢复可用
+
+v0.4.0 把外部命令改由会话宿主进程承载（`fd2d757`）后，Windows 上**所有外部命令**失效
+（`ls`/`git`/`grep` 一律报 `会话宿主不可用`，每次约 2s），生产路径（tanya 本体）同样受影响。
+根因是协议里传的还是解释器的**内部 POSIX 形态**路径（`/c/Users/...`），宿主的
+`exec.Cmd.Dir` 解不出这个目录、`cmd.Start()` 随即失败；而宿主 stderr 被丢弃、启动失败
+也不回报，父进程只能等满 2s 握手超时，报出误导性的「会话宿主不可用」。修这一处时**实测又发现两个
+跨平台回归**（Linux 上同样复现），一并修掉。
+
+- **协议路径一律宿主形态**（`transport.go`、`vbash.go`、`vbash/platform.go`）：
+  `reqPayload` 新增 `path` 字段（解释器已解析好的可执行文件宿主路径），`cwd` 改传
+  `Runner.HostDir()`（新增导出访问器，`hostDir` 改名）。宿主拿到就 `exec` 并把
+  `cmd.Dir` 设成它，**不做任何 PATH 查找与形态转换**——零平台知识，
+  `sessionhost_posix.go` 也不必反向转换。注意这是**子进程 cwd**（`cmd.Dir`），
+  与 §9 不变量「进程 cwd 不变、全程不 `os.Chdir`」互不影响：宿主从不调 `os.Chdir`。
+  `argv` 保持用户原文，只把 `cmd.Args[0]` 设回它，子进程的 `$0` 与 bash 一致。
+- **`vbash.Handler` 契约变更（BREAKING）**：签名加一个参数
+  `func(ctx, r, hostPath string, argv []string, io) (int, error)`。同时**删掉 `lookPath`/
+  `resolveExternal` 在注入 `Handler` 时的短路**——原先它们直接返回裸名字，让宿主自己查；
+  而 `exec.Command` 的 PATH 查找读的是**宿主进程**的环境，与解释器的 `$PATH`、`cd` 无关。
+  实测回归：`PATH=/tmp/x:$PATH; mytool` 在 v0.3.1 正常、v0.4.0 报「会话宿主不可用」。
+  库内唯一消费者是 `tools/shell`，两个前台（tanya/ivan）不受影响。
+- **命令起不来 ≠ 宿主不可用**：宿主对 `cmd.Start()` 失败回报 `frameStart` 的 pgid=0 并把
+  `err` 写回 stderr；父进程据此直接取退出码 127，不再等满握手超时。实测 `no-such-cmd-xyz`
+  从 2004ms 降到 3ms、且报 `command not found` 而非「会话宿主不可用」。
+- **保留宿主 stderr**：`cmd.Stderr` 从 `nil` 改为 4 KiB 环形缓冲（`tailBuffer`），
+  握手失败时以 `fmt.Errorf("%w: %s", ...)` 拼进错误（`errors.Is(err, errHostUnavailable)`
+  仍成立）。同类问题今后不必再靠翻代码定位。
+- **Windows `IsExec` 修正**（`vbash/platform_windows.go`）：不再复用 `ExecSuffixes` 的空串条目
+  ——那个 `""` 是「查找时允许不带后缀的候选」，而裸名文件在 Windows 上不可执行（没有执行位）。
+  混用会把 `d1/nx` 这类无扩展名普通文件判成可执行，`command -v` 于是选中它，与
+  `docs/vbash-capability.md` 的「后缀在 `.exe .cmd .bat .com` 内」口径冲突。
+- **测试侧补齐平台分片**：
+  - `tools/main_linux_test.go`、`tools/shell/main_linux_test.go` → `main_test.go`，**去平台 tag**。
+    宿主机制三个平台都启用，缺 `TestMain` 时测试二进制的 `os.Executable()` 自举会让子进程
+    **再跑一遍测试**（递归自举 + 握手超时），这正是 `tools/shell` 曾 600s panic 超时的原因。
+  - `vbash/builtin_command_test.go` 的 5 项 Windows 失败：可执行文件名走 `exeName`（Windows 补
+    `.exe`）、`PATH` 分隔符走 `testPathSep`（Windows 为 `;`）；`TestCommandPDoesNotLeakPath`
+    依赖 `sh` 读子进程 `PATH`，平台分片为 Windows/未知平台 `Skip`（语义由 POSIX 侧覆盖）。
+  - 新增 `tools/shell/sessionhost_test.go` 7 例：脚本内改 `PATH` 仍按 shell 解析、命令起不来
+    毫秒级失败且不误报、宿主内启动失败与「宿主不可用」区分、协议 cwd 形态与 `pwd` 实跑、
+    `path`/`argv[0]` 两字段不混、宿主 stderr 附加与环形缓冲滚动，以及
+    **`TestHostNeverChdirsProcess`**（源码级断言：两个平台分片只许 `cmd.Dir = req.cwd`、
+    不许出现 `os.Chdir`——守住 §9 不变量 4「进程 cwd 恒为启动目录」）。
+  - 新增 `vbash/platform_windows_test.go` 的 `TestWindowsIsExecNeedsKnownSuffix`（8 种后缀 +
+    目录 + 大小写），锁住 PATHEXT 口径。
+- **变异复验 5 处**：还原 `lookPath` 短路、还原 `pgid<=0` 误报、还原 `cwd` 传内部形态、
+  还原 `IsExec` 含空串、去掉 stderr 附加——前两处与第五处准确变红；`cwd` 那处**在 POSIX 上
+  无法变红**（`FromHost`/`ToHost` 恒等），已在用例注释写明「该侧要靠 Windows 真机验证」。
+- **验收**：`gofmt -l` 干净、`go build/vet ./...`、`go test ./...`、`go test -race`（三包）全绿、
+  `make cross` OK、`make vbash-check` 295/295；tanya `go test ./...` 全绿、`make build` 通过。
+- **文档**：`docs/shell-tool.md` §17.1（路径形态条款、命令起不来≠宿主不可用、stderr 留存、
+  测试钩子去 tag 与漏接症状）、`docs/vbash-impl.md` S9-3（删掉已不存在的短路理由）、
+  `docs/vbash-capability.md` 与 `vbash/builtin_command.go`、`tools/shell/vbash_test.go`
+  的过时注释同步。
+
 ## 2026-11-19 feat(vbash): 新增 `command` 内建（`-p`/`-v`/`-V`/执行态）
 
 语料里 `command -v` 27 次、`command -V` 3 次，工具结果中 `command: command not found` 出现 70 次

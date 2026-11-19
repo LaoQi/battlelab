@@ -75,13 +75,19 @@ func windowsDriveOf(s string) (string, bool) {
 	return strings.ToLower(s[:1]) + s[1:], true
 }
 
+// windowsIsExec 按 PATHEXT 语义判可执行：**后缀必须在清单内**才算。
+//
+// 不能复用 ExecSuffixes 的空串条目：那个 "" 是「查找时允许不带后缀的候选」
+// （`ls` 要先试 `ls.exe`，试不到再试裸名），而**裸名文件本身在 Windows 上不可执行**
+// （没有执行位，CreateProcess 只认 PATHEXT 里的类型）。混用两者会把
+// `d1/nx` 这种无扩展名普通文件判成可执行。
 func windowsIsExec(name string, st os.FileInfo) bool {
 	if st.IsDir() {
 		return false
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	for _, s := range windowsExecSuffixes {
-		if s == "" || ext == s {
+		if s != "" && ext == s {
 			return true
 		}
 	}

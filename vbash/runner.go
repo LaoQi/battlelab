@@ -53,7 +53,13 @@ type CmdState struct {
 // Handler 实现用它决定是否让命令取得终端。
 func (r *Runner) Background() bool { return r.bg }
 
-type Handler func(ctx context.Context, r *Runner, argv []string, io *IO) (int, error)
+// Handler 接管外部命令的执行（调用方据此把命令交给会话宿主等独立进程）。
+//
+// hostPath 是**已解析好的宿主形态绝对路径**：解释器已经按 shell 的 `$PATH`
+// 与工作目录查过一遍，实现方据此直接 exec，不必（也不该）自己再查一次——
+// `exec.Command` 的 PATH 查找读的是进程环境，与解释器 `$PATH` 无关。
+// argv 保持原样（`argv[0]` 是用户写的名字），子进程看到的 `$0` 才与 bash 一致。
+type Handler func(ctx context.Context, r *Runner, hostPath string, argv []string, io *IO) (int, error)
 
 type ExecResult struct {
 	ExitCode int

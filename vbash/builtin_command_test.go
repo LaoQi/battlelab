@@ -122,23 +122,25 @@ func TestCommandPathLookupRelativeForms(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTool(t, filepath.Join(dir, "sub"), "t1", true)
+	// Windows 无执行位：可执行文件要有 PATHEXT 后缀，否则不是可执行（见 plat.IsExec）。
+	name := exeName("t1")
+	writeTool(t, filepath.Join(dir, "sub"), name, true)
 	cases := []struct{ path, wantV, wantVerbose string }{
 		// 只削末尾一个 '/'：`sub//` → `sub//t1`（bash 口径，不 clean）
-		{"sub", "sub/t1\n", "t1 is DIR/sub/t1\n"},
-		{"sub/", "sub/t1\n", "t1 is DIR/sub/t1\n"},
-		{"sub//", "sub//t1\n", "t1 is DIR/sub//t1\n"},
-		{"./sub", "./sub/t1\n", "t1 is DIR/sub/t1\n"},
-		{"sub/.", "sub/./t1\n", "t1 is DIR/sub/./t1\n"},
+		{"sub", "sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
+		{"sub/", "sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
+		{"sub//", "sub//" + name + "\n", "t1 is DIR/sub//" + name + "\n"},
+		{"./sub", "./sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
+		{"sub/.", "sub/./" + name + "\n", "t1 is DIR/sub/./" + name + "\n"},
 	}
 	for _, c := range cases {
 		wantV := strings.ReplaceAll(c.wantV, "DIR", dir)
-		got := runWithPath(t, dir, c.path, `command -v t1`)
+		got := runWithPath(t, dir, c.path, `command -v `+name)
 		if got.stdout != wantV {
 			t.Errorf("PATH=%q → -v 得 %q，期望 %q", c.path, got.stdout, wantV)
 		}
 		wantVerbose := strings.ReplaceAll(c.wantVerbose, "DIR", dir)
-		got = runWithPath(t, dir, c.path, `command -V t1`)
+		got = runWithPath(t, dir, c.path, `command -V `+name)
 		if got.stdout != wantVerbose {
 			t.Errorf("PATH=%q → -V 得 %q，期望 %q", c.path, got.stdout, wantVerbose)
 		}
@@ -170,12 +172,14 @@ func TestCommandPathLookupPrefersExecutable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeTool(t, filepath.Join(dir, "d1"), "nx", false) // 非可执行
-	writeTool(t, filepath.Join(dir, "d3"), "nx", true)  // 可执行
-	// 先找可执行的那一个
-	got := runWithPath(t, dir, "d1:d3", `command -v nx`)
-	if got.stdout != "d3/nx\n" {
-		t.Errorf("应优先可执行，实得 %q", got.stdout)
+	// 同名文件：d1 里不可执行（裸名，Windows 上同样不可执行），d3 里可执行。
+	writeTool(t, filepath.Join(dir, "d1"), "nx", false)
+	exe := exeName("nx")
+	writeTool(t, filepath.Join(dir, "d3"), exe, true)
+	// 先找可执行的那一个：Windows 上查找时会给裸名补 .exe，命中 d3 的 nx.exe
+	got := runWithPath(t, dir, "d1"+testPathSep+"d3", `command -v nx`)
+	if want := "d3/" + exe + "\n"; got.stdout != want {
+		t.Errorf("应优先可执行，实得 %q，期望 %q", got.stdout, want)
 	}
 }
 
@@ -189,7 +193,7 @@ func TestCommandPathLookupFallsBackToNonExecutable(t *testing.T) {
 	writeTool(t, filepath.Join(dir, "d4"), "ny", false)
 	writeTool(t, filepath.Join(dir, "d5"), "ny", false)
 	// 全都没有可执行时，回落到**第一个**非目录文件
-	got := runWithPath(t, dir, "d4:d5", `command -v ny`)
+	got := runWithPath(t, dir, "d4"+testPathSep+"d5", `command -v ny`)
 	if got.stdout != "d4/ny\n" {
 		t.Errorf("应回落到第一个非目录文件，实得 %q", got.stdout)
 	}
@@ -198,7 +202,7 @@ func TestCommandPathLookupFallsBackToNonExecutable(t *testing.T) {
 func TestCommandPathLookupEmptyEntryMeansDot(t *testing.T) {
 	dir := tempDir(t)
 	writeTool(t, dir, "ctool", true)
-	for _, p := range []string{"", ":", ".:", ":/usr/bin"} {
+	for _, p := range []string{"", testPathSep, "." + testPathSep, testPathSep + testPathNoTools} {
 		got := runWithPath(t, dir, p, `command -v ctool`)
 		if got.stdout != "./ctool\n" {
 			t.Errorf("PATH=%q → %q，期望 ./ctool", p, got.stdout)
@@ -211,21 +215,22 @@ func TestCommandPathLikeArgNeedsExecutable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTool(t, filepath.Join(dir, "sub"), "t1", true)
+	name := exeName("t1")
+	writeTool(t, filepath.Join(dir, "sub"), name, true)
 	writeTool(t, dir, "ne1", false)
 	if err := os.MkdirAll(filepath.Join(dir, "adir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct{ src, want string }{
 		// 含 '/' 的参数：命中即原样回显，不做绝对化
-		{`command -v ./sub/t1`, "./sub/t1\n"},
-		{`command -V ./sub/t1`, "./sub/t1 is ./sub/t1\n"},
+		{`command -v ./sub/` + name, "./sub/" + name + "\n"},
+		{`command -V ./sub/` + name, "./sub/" + name + " is ./sub/" + name + "\n"},
 		{`command -v ne1 2>/dev/null; command -v ./ne1`, ""},
 		{`command -v ./ne1; echo "rc=$?"`, "rc=1\n"},
 		{`command -v ./adir; echo "rc=$?"`, "rc=1\n"},
 	}
 	for _, c := range cases {
-		got := runWithPath(t, dir, "/usr/local/bin:/usr/bin:/bin", c.src)
+		got := runWithPath(t, dir, testPathNoTools, c.src)
 		if got.stdout != c.want {
 			t.Errorf("%s → %q，期望 %q", c.src, got.stdout, c.want)
 		}
@@ -298,28 +303,32 @@ func TestCommandExecuteSkipsFunctions(t *testing.T) {
 
 func TestCommandPDoesNotLeakPath(t *testing.T) {
 	dir := tempDir(t)
-	// -p 只影响本次查找，不改子进程的 PATH
-	got := runWithPath(t, dir, "/tmp/custom-path:/usr/bin:/bin", `command -p sh -c 'echo $PATH'`)
-	if got.stdout != "/tmp/custom-path:/usr/bin:/bin\n" {
-		t.Errorf("-p 不应改子进程 PATH，实得 %q", got.stdout)
+	// -p 只影响本次查找，不改子进程的 PATH：拿 `sh -c 'echo $PATH'` 读子进程环境。
+	// Windows 上没有 sh 这类「必定存在且能打印自身环境」的程序（见下面 Skip 的理由）。
+	customPath := skippableShPath(t)
+	got := runWithPath(t, dir, customPath, `command -p sh -c 'echo $PATH'`)
+	if got.stdout != customPath+"\n" {
+		t.Errorf("-p 不应改子进程 PATH，实得 %q，期望 %q", got.stdout, customPath)
 	}
 }
 
 func TestCommandPVUsesDefaultPath(t *testing.T) {
 	dir := tempDir(t)
-	writeTool(t, dir, "ptool", true)
+	name := exeName("ptool")
+	writeTool(t, dir, name, true)
+	customPath := dir + testPathSep + testPathNoTools
 	// 自定义 PATH 里有 ptool，但 -p 改用 plat.DefaultPath → miss
-	got := runWithPath(t, dir, dir+":/usr/bin:/bin", `command -p -v ptool; echo "rc=$?"`)
+	got := runWithPath(t, dir, customPath, `command -p -v ptool; echo "rc=$?"`)
 	if got.stdout != "rc=1\n" {
 		t.Errorf("-p 应改用默认 PATH，实得 %q", got.stdout)
 	}
 	// 不加 -p 时能在自定义 PATH 里找到
-	got = runWithPath(t, dir, dir+":/usr/bin:/bin", `command -v ptool`)
-	if got.stdout != dir+"/ptool\n" {
-		t.Errorf("不加 -p 应命中自定义 PATH，实得 %q", got.stdout)
+	got = runWithPath(t, dir, customPath, `command -v ptool`)
+	if want := dir + "/" + name + "\n"; got.stdout != want {
+		t.Errorf("不加 -p 应命中自定义 PATH，实得 %q，期望 %q", got.stdout, want)
 	}
 	// 执行态同理：-p 只查默认 PATH，自定义 PATH 里的 ptool 不该被执行到
-	got = runWithPath(t, dir, dir+":/usr/bin:/bin", `command -p ptool; echo "rc=$?"`)
+	got = runWithPath(t, dir, customPath, `command -p ptool; echo "rc=$?"`)
 	if !strings.Contains(got.stdout, "rc=127") {
 		t.Errorf("-p 执行态应只有默认 PATH 生效（ptool 不可达 → 127），实得 %q", got.stdout)
 	}

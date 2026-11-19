@@ -139,7 +139,9 @@ func (r *Runner) hostPath(target string) string {
 	return plat.ToHost(r.Env.Dir(), p)
 }
 
-func (r *Runner) hostDir() string {
+// HostDir 返回当前工作目录的**宿主形态**。会话宿主进程用它设 exec.Cmd.Dir：
+// 协议里 cwd 一律宿主形态，宿主侧因此不需要任何路径形态知识。
+func (r *Runner) HostDir() string {
 	if r.Env.Dir() == "" {
 		return ""
 	}

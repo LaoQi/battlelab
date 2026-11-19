@@ -332,8 +332,9 @@ func TestResolveBuiltinIgnoresLookPath(t *testing.T) {
 }
 
 // TestVbashCommandBuiltinWithHandler 锁住生产路径的关键点：tanya 装配 vbash 时会注入
-// Console.Handler（tools/shell/vbash.go 的 t.hostHandler），此时解释器的 resolveExternal/
-// lookPath 都会短路返回原名字。`command -v` 必须绕开这条路自己做查找，否则会永远报"找到了"。
+// Console.Handler（tools/shell/vbash.go 的 t.hostHandler）。`command -v` 有自己的
+// bash 口径查找（`commandPathLookup`：非可执行也算命中、路径不 clean），不复用
+// `lookPath`，两者不能混。
 func TestVbashCommandBuiltinWithHandler(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX 用例：断言的是 /usr/bin 这类路径形态")
@@ -348,9 +349,9 @@ func TestVbashCommandBuiltinWithHandler(t *testing.T) {
 	if !strings.Contains(got, "echo") {
 		t.Errorf("`command -v echo` 应命中内建，实际 %q", got)
 	}
-	// miss 必须真的 miss（Handler 短路会把它误判成命中并打印名字）
+	// miss 必须真的 miss（PATH 里没有这个名字就不该打印它）
 	if strings.Contains(got, "nosuchtool-xyz") {
-		t.Errorf("`command -v nosuchtool-xyz` 不应命中（Handler 短路会让它误判命中），实际 %q", got)
+		t.Errorf("`command -v nosuchtool-xyz` 不应命中，实际 %q", got)
 	}
 	if !strings.Contains(got, "rc=1") {
 		t.Errorf("全 miss 时退出码应为 1，实际 %q", got)

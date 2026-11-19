@@ -160,12 +160,16 @@ func isPlainStdin(r io.Reader) bool {
 //   - `a | b`：b 的 In 是上一段管道的读端 *os.File，要由父进程搬进 frameIn；
 //   - `x=$(cmd)`：Out 是命令替换的内存 buffer，输出必须回那里而不是工具结果；
 //   - `cmd > file`：Out 是重定向打开的文件。
+//
+// path 是解释器解析好的宿主形态可执行文件路径（宿主不自己查 PATH——它的进程
+// 环境与解释器的 `$PATH` 无关），argv 保持用户原文，子进程的 `$0` 才与 bash 一致。
 func (t *Tool) hostHandler(h *sessionHost) vbash.Handler {
-	return func(ctx context.Context, r *vbash.Runner, argv []string, in *vbash.IO) (int, error) {
+	return func(ctx context.Context, r *vbash.Runner, path string, argv []string, in *vbash.IO) (int, error) {
 		// 前台标记由解释器给出：它才知道这条命令是不是 & 起的后台作业。
 		req := reqPayload{
+			path:  path,
 			argv:  argv,
-			cwd:   r.Env.Dir(),
+			cwd:   r.HostDir(),
 			env:   r.Env.Environ(),
 			front: !r.Background(),
 			// stdin 未被重定向/接管道时，命令的 stdin 接虚拟 tty：这样
