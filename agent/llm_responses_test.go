@@ -151,24 +151,7 @@ func TestResponsesToolLoopReasoningReplay(t *testing.T) {
 			t.Fatalf("input 顺序: got %v want %v", kinds, want)
 		}
 	}
-	rs := input[1].(map[string]any)
-	if rs["id"] != "rs_test" {
-		t.Errorf("reasoning 回传: %v", rs)
-	}
-	content, _ := rs["content"].([]any)
-	if len(content) != 1 {
-		t.Fatalf("reasoning content parts: %v", content)
-	}
-	part := content[0].(map[string]any)
-	if part["type"] != "reasoning_text" || part["text"] != "enc-1" {
-		t.Errorf("reasoning 明文回传: %v", part)
-	}
-	if _, ok := rs["encrypted_content"]; ok {
-		t.Error("reasoning 回传不应携带 encrypted_content")
-	}
-	if summary, ok := rs["summary"].([]any); !ok || len(summary) != 0 {
-		t.Errorf("reasoning 回传应携带空 summary 数组: %v", rs["summary"])
-	}
+	assertReplayReasoningItem(t, input[1].(map[string]any), "rs_test", "enc-1")
 	fc := input[2].(map[string]any)
 	if fc["call_id"] != "call_1" || fc["name"] != "calc" {
 		t.Errorf("function_call 回传: %v", fc)
@@ -760,7 +743,7 @@ func TestResponsesStreamReasoningEndEvents(t *testing.T) {
 // 流式事件名是 response.reasoning_summary_text.*。曾经只认 content[].reasoning_text，
 // 导致 Content 恒空、落盘后 reasoning_items 只剩 id（2026-11-23 实测确认）。
 func TestResponsesSummaryFormCapturesContent(t *testing.T) {
-	m, cfg := responsesLLM(t, mockStep{reasoning: "先想了想", reasoningForm: "summary", content: "答案是 42"})
+	_, cfg := responsesLLM(t, mockStep{reasoning: "先想了想", reasoningForm: "summary", content: "答案是 42"})
 	var streamed strings.Builder
 	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -782,16 +765,8 @@ func TestResponsesSummaryFormCapturesContent(t *testing.T) {
 	if got.Content != "先想了想" {
 		t.Errorf("摘要形态正文应落进 Content: %+v", got)
 	}
-	if !got.FromSummary {
-		t.Errorf("摘要形态应标记 FromSummary: %+v", got)
-	}
 	if got.ID != "rs_test" {
 		t.Errorf("摘要形态应保留 id: %+v", got)
-	}
-	// 回传必须仍是摘要形态：文本错配虽被实测上游宽容（200），但摘要进 content 会丢掉
-	// 「这是摘要」的语义；硬约束只有 summary 键必须存在（见 TestResponsesMixedDeltaFallback）。
-	if len(m.rawReqs) != 1 {
-		t.Fatalf("请求数: %d", len(m.rawReqs))
 	}
 }
 
@@ -807,80 +782,101 @@ func TestResponsesPlainFormPrefersContent(t *testing.T) {
 	if len(msg.ReasoningItems) != 1 || msg.ReasoningItems[0].Content != "明文推理" {
 		t.Fatalf("明文形态正文: %+v", msg.ReasoningItems)
 	}
-	if msg.ReasoningItems[0].FromSummary {
-		t.Errorf("明文形态不应标记 FromSummary: %+v", msg.ReasoningItems[0])
-	}
 }
 
 // 同一 item 两侧都有内容时优先明文 reasoning_text（它比摘要完整）。
 func TestResponsesReasoningPrefersPlainOverSummary(t *testing.T) {
-	text, fromSummary := reasoningItemText(
+	if text := reasoningItemText(
 		[]responsesContentText{{Type: "reasoning_text", Text: "明文全文"}},
 		[]responsesContentText{{Type: "summary_text", Text: "摘要"}},
-	)
-	if text != "明文全文" || fromSummary {
-		t.Errorf("应优先明文: text=%q fromSummary=%v", text, fromSummary)
+	); text != "明文全文" {
+		t.Errorf("应优先明文: %q", text)
 	}
 	// 明文侧为空数组时回落摘要（真实上游的空侧就是 []）。
-	text, fromSummary = reasoningItemText(
+	if text := reasoningItemText(
 		[]responsesContentText{},
 		[]responsesContentText{{Type: "summary_text", Text: "摘要"}},
-	)
-	if text != "摘要" || !fromSummary {
-		t.Errorf("应回落摘要: text=%q fromSummary=%v", text, fromSummary)
+	); text != "摘要" {
+		t.Errorf("应回落摘要: %q", text)
 	}
-	// 两侧都空 → 空串且不是摘要形态。
-	if text, fromSummary = reasoningItemText(nil, nil); text != "" || fromSummary {
-		t.Errorf("两侧均空应得空串: text=%q fromSummary=%v", text, fromSummary)
+	// 两侧都空 → 空串，调用方按「无思维链」处理。
+	if text := reasoningItemText(nil, nil); text != "" {
+		t.Errorf("两侧均空应得空串: %q", text)
 	}
 }
 
-// 摘要形态历史回传时，正文必须进 summary[].summary_text，而不是 content。
-func TestResponsesReplaySummaryForm(t *testing.T) {
+// assertReplayReasoningItem 断言回传的 reasoning item 与目标形态逐键一致：
+// type=reasoning、summary/content 各恰一段且同文（summary_text / reasoning_text）、
+// wantID 非空时带原样 id、空 id 时无 id 键，且除以上四键外没有别的键
+// （status / encrypted_content 等一律不带）。
+func assertReplayReasoningItem(t *testing.T, item map[string]any, wantID, wantText string) {
+	t.Helper()
+	if item["type"] != "reasoning" {
+		t.Errorf("type = %v, want reasoning", item["type"])
+	}
+	for side, typ := range map[string]string{"summary": "summary_text", "content": "reasoning_text"} {
+		arr, _ := item[side].([]any)
+		if len(arr) != 1 {
+			t.Fatalf("%s 应恰有一段: %v", side, item[side])
+		}
+		if p, ok := arr[0].(map[string]any); !ok || p["type"] != typ || p["text"] != wantText {
+			t.Errorf("%s[0] = %v, want {%s %q}", side, arr[0], typ, wantText)
+		}
+	}
+	if wantID == "" {
+		if _, ok := item["id"]; ok {
+			t.Errorf("空 id 不应出现在请求里: %v", item)
+		}
+	} else if item["id"] != wantID {
+		t.Errorf("id = %v, want %q", item["id"], wantID)
+	}
+	wantKeys := map[string]bool{"type": true, "summary": true, "content": true, "id": wantID != ""}
+	for k := range item {
+		if !wantKeys[k] {
+			t.Errorf("reasoning item 出现未预期键 %q: %v", k, item)
+		}
+	}
+}
+
+// replayReasoningItem 取第 i 个请求 input 里唯一的 reasoning item。
+func replayReasoningItem(t *testing.T, m *mockLLM, i int) map[string]any {
+	t.Helper()
+	input, _ := m.rawReqs[i]["input"].([]any)
+	var rs []map[string]any
+	for _, it := range input {
+		if item, ok := it.(map[string]any); ok && item["type"] == "reasoning" {
+			rs = append(rs, item)
+		}
+	}
+	if len(rs) != 1 {
+		t.Fatalf("请求 %d 应恰有一个 reasoning item: %v", i, rs)
+	}
+	return rs[0]
+}
+
+// 回传形态与供应商无关：正文双写到 summary[].summary_text 与 content[].reasoning_text
+// （同一份正文），上游 id 原样带回，不带 status / encrypted_content。
+// 各家只读其一（content 优先）、双写不双计费，依据与实测见 docs/reasoning-replay.md。
+func TestResponsesReplayDoubleWrites(t *testing.T) {
 	m, cfg := responsesLLM(t, mockStep{content: "ok"})
 	history := []Message{
 		{Role: "user", Content: "hi"},
 		{Role: "assistant", Content: "ok", ReasoningItems: []ReasoningItem{
-			{ID: "rs_sum", Content: "摘要推理", FromSummary: true},
+			{ID: "rs_sum", Content: "先想了想"},
 		}},
 	}
 	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
 		t.Fatal(err)
 	}
-	input, _ := m.rawReqs[0]["input"].([]any)
-	var rs map[string]any
-	for _, it := range input {
-		if item, ok := it.(map[string]any); ok && item["type"] == "reasoning" {
-			rs = item
-		}
-	}
-	if rs == nil {
-		t.Fatal("应回传 reasoning item")
-	}
-	summary, _ := rs["summary"].([]any)
-	if len(summary) != 1 {
-		t.Fatalf("摘要形态回传 summary 应非空: %v", rs)
-	}
-	part := summary[0].(map[string]any)
-	if part["type"] != "summary_text" || part["text"] != "摘要推理" {
-		t.Errorf("摘要原文回传: %v", part)
-	}
-	if content, _ := rs["content"].([]any); len(content) != 0 {
-		t.Errorf("摘要形态回传不应带 content 正文: %v", rs["content"])
-	}
-	if rs["id"] != "rs_sum" {
-		t.Errorf("应保留 id: %v", rs)
-	}
+	assertReplayReasoningItem(t, replayReasoningItem(t, m, 0), "rs_sum", "先想了想")
 }
 
-// 旧会话文件没有 from_summary 键 → 按明文形态回传，与历史行为一致（向后兼容）。
-func TestResponsesReplayLegacyItemDefaultsToPlain(t *testing.T) {
+// 旧会话文件带已撤回的 from_summary 键（2026-11-23 引入、次日方案推翻）：
+// encoding/json 忽略未知键，条目照常加载并按统一形态双写回传，无需迁移。
+func TestResponsesReplayLegacySummaryKeyIgnored(t *testing.T) {
 	var legacy ReasoningItem
-	if err := json.Unmarshal([]byte(`{"id":"rs_old","content":"旧推理"}`), &legacy); err != nil {
+	if err := json.Unmarshal([]byte(`{"id":"rs_old","content":"旧推理","from_summary":true}`), &legacy); err != nil {
 		t.Fatal(err)
-	}
-	if legacy.FromSummary {
-		t.Error("旧文件缺 from_summary 时应为明文形态")
 	}
 	m, cfg := responsesLLM(t, mockStep{content: "ok"})
 	history := []Message{
@@ -890,22 +886,7 @@ func TestResponsesReplayLegacyItemDefaultsToPlain(t *testing.T) {
 	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
 		t.Fatal(err)
 	}
-	input, _ := m.rawReqs[0]["input"].([]any)
-	for _, it := range input {
-		item, ok := it.(map[string]any)
-		if !ok || item["type"] != "reasoning" {
-			continue
-		}
-		content, _ := item["content"].([]any)
-		if len(content) != 1 {
-			t.Fatalf("旧条目应走明文形态: %v", item)
-		}
-		if p := content[0].(map[string]any); p["type"] != "reasoning_text" || p["text"] != "旧推理" {
-			t.Errorf("旧条目明文回传: %v", p)
-		}
-		return
-	}
-	t.Fatal("未回传 reasoning item")
+	assertReplayReasoningItem(t, replayReasoningItem(t, m, 0), "rs_old", "旧推理")
 }
 
 // 兜底：个别上游只发 reasoning delta、终态不给 reasoning item。此时正文必须
@@ -930,9 +911,6 @@ data: {"type":"response.output_text.delta","delta":"好"}
 	if msg.ReasoningItems[0].Content != "只有增量没有终态" {
 		t.Errorf("兜底正文: %q", msg.ReasoningItems[0].Content)
 	}
-	if msg.ReasoningItems[0].FromSummary {
-		t.Errorf("明文 delta 兜底不应标记为摘要形态: %+v", msg.ReasoningItems[0])
-	}
 }
 
 // 有终态 item 时不得重复添加（累积只作兜底）。
@@ -952,7 +930,7 @@ func TestResponsesReasoningNoDuplicateWhenTerminalPresent(t *testing.T) {
 }
 
 // 两派 delta 混发且终态缺 reasoning item 时的兜底：不能把明文与摘要拼成一段，
-// 也不能因为「收到过 summary delta」就把整段标成摘要形态。按终态解析同序取明文优先。
+// 按终态解析同序取明文优先（它比摘要完整）。
 func TestResponsesMixedDeltaFallbackPrefersPlain(t *testing.T) {
 	_, cfg := responsesLLM(t, mockStep{rawSSE: []string{
 		`event: response.reasoning_text.delta
@@ -981,14 +959,11 @@ data: {"type":"response.output_text.delta","delta":"好"}
 	if got.Content != "明文段" {
 		t.Errorf("混发时应取明文段、不与摘要拼接: %q", got.Content)
 	}
-	if got.FromSummary {
-		t.Errorf("取自明文 delta 的兜底不应标记摘要形态: %+v", got)
-	}
 }
 
-// 只有摘要 delta、终态缺 reasoning item：兜底必须标 FromSummary，
-// 否则回传时会以明文形态塞进 content，丢掉「这是摘要」的来源语义。
-func TestResponsesSummaryDeltaFallbackMarksSummary(t *testing.T) {
+// 只有摘要 delta、终态缺 reasoning item：兜底取摘要桶（明文桶为空），
+// 否则这次思考既不落盘也不回传。
+func TestResponsesSummaryDeltaFallbackUsedWhenNoPlain(t *testing.T) {
 	_, cfg := responsesLLM(t, mockStep{rawSSE: []string{
 		`event: response.reasoning_summary_text.delta
 data: {"type":"response.reasoning_summary_text.delta","delta":"摘要段"}
@@ -1008,11 +983,7 @@ data: {"type":"response.output_text.delta","delta":"好"}
 	if len(msg.ReasoningItems) != 1 {
 		t.Fatalf("兜底应补一条 reasoning item: %+v", msg.ReasoningItems)
 	}
-	got := msg.ReasoningItems[0]
-	if got.Content != "摘要段" {
+	if got := msg.ReasoningItems[0]; got.Content != "摘要段" {
 		t.Errorf("兜底正文: %q", got.Content)
-	}
-	if !got.FromSummary {
-		t.Errorf("摘要 delta 兜底应标记摘要形态: %+v", got)
 	}
 }

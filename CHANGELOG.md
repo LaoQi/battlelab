@@ -1,3 +1,30 @@
+## 2026-11-24 fix(agent)!: 思维链回传改为双写 + 原样 id，删除 `ReasoningItem.FromSummary`
+
+**BREAKING**：删除公开字段 `ReasoningItem.FromSummary`（v0.5.1 引入）。jsonl 键 `from_summary` 不再写入；旧文件里的
+该键被 `encoding/json` 忽略，无需迁移。调用方若引用该字段需删除（tanya 同批处理）。完整实测与决策记录见
+`docs/reasoning-replay.md`。
+
+**为什么删**：`FromSummary` 只服务于「回传形态随来源」这一个决策，而该决策的两条前提（文本放错侧会被拒收 /
+会丢「明文还是摘要」的语义）在上一条复核里已被推翻——各家把 `content`/`summary` 当同一份正文的两个视图、取其一
+（`content` 优先），唯一硬约束是 `summary` 键恒在且为数组（opencode 线）。继续维护一个没有读者的标记只增加出错面
+（引入次日即因两派 delta 混发标错形态返工一次）。
+
+**回传形态**（`responsesReasoningItem`）：正文双写到 `summary[].summary_text` 与 `content[].reasoning_text`
+（同一份正文），上游 `id` 非空时原样带回，不带 `status` / `encrypted_content`，空正文条目仍整条跳过。依据是
+各家 input schema 的并集 + 实测各家对多余键宽容：智谱只认 `content`，opencode 要求 `summary` 键恒在，Kimi 两侧都收
+且 `content` 优先，DeepSeek / 火山方舟回传为 no-op，LongCat 两侧都空才 400。7 条线实测 `id` / `status` /
+摘要同文副本均不改变 `input_tokens`（不双计费）。
+
+**行为变化**：同线会话的请求字节变化（`summary[]` 由空变非空）但语义不变（各线只读其一），每个活跃会话的首个请求
+前缀缓存 miss 一次；跨线会话里来自摘要派的条目，在只读 `content` 的线上（智谱原生）从不可读变为可读——收益是
+一致性，代价是该线（无前缀缓存）每轮多计入这部分正文。
+
+**简化**：`reasoningItemText` 只返回正文（不再回报来源形态）；delta 兜底保留明文/摘要两桶、明文优先择一，不再标形态。
+
+**测试**：新增整 item 形态断言 `assertReplayReasoningItem`（键集合 + 两侧同文 + id 有/无 + 无多余键）；改写 9 个用例
+（工具循环回传、两形态捕获、明文优先、双写回传、旧 `from_summary` 键被忽略、三处兜底）。**变异复验 5 处**
+（只写 `content` 侧、去掉 `summary` 键、空正文不跳过、多带 `status`、丢 `id`）全部由对应用例拦下。
+
 ## 2026-11-24 fix(agent): 复核思维链两形态的兼容面，delta 兜底按形态分桶
 
 对 `d8c6ee4` 的真实兼容面做了一轮实测复核（经内网聚合网关，5 家上游 6 条线：DeepSeek / GLM /

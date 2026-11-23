@@ -36,6 +36,7 @@ ctty/    控制终端原语：/dev/tty、termios、模式复位/光标锚点、�
 - `session-archive.md` — 会话归档卷
 - `session-handoff.md` — 会话交接（`/next` + `next_session`）
 - `cache-probe.md` — prompt cache 实测与台阶
+- `reasoning-replay.md` — `responses` 协议思维链回传：兼容面实测、计费矩阵与双写形态决策
 - `extraction.md` — 本文库的抽取边界与判据
 - `vbash.md` — 虚拟 bash 方向的语料分析（分层/引号/heredoc/外部程序边界）
 - `vbash-bench.md` — 虚拟 bash 回归基准（`testdata/vbash-bench/`，离线手动运行）

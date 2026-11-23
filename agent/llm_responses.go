@@ -112,24 +112,21 @@ func buildResponsesInput(messages []Message, detail string) (string, []any) {
 	return instructions, items
 }
 
-// responsesReasoningItem 把一条历史思维链还原成回传用的 reasoning item。
-// 形态随来源：摘要形态放进 summary[].summary_text，明文形态放进 content[].reasoning_text。
-// 两侧都显式给数组，空的另一侧用 [] 占位——这是上游唯一的硬约束：opencode 线对
-// 缺 summary 键（或其值为 null）的 reasoning item 报 input[].summary: expected an array
-// （2026-11-24 实测，唯一 400 路径）。文本放错数组在实测的 DeepSeek / GLM / Kimi /
-// 火山方舟上宽容（200），但仍按来源形态回传：错配会丢掉「明文还是摘要」的语义。
+// responsesReasoningItem 构造回传用的 reasoning item，形态与供应商无关：正文双写
+// （content[].reasoning_text 与 summary[].summary_text 各一份同文）、上游 id 原样带回、
+// 不带 status。依据与实测见 docs/reasoning-replay.md：智谱 InputReasoning 只认 content，
+// opencode 线要求 summary 键恒在且为数组，Kimi 两侧都收且 content 优先；各家只读其一，
+// 双写不双计费。id 实测全被忽略且零成本，带着以备接要求原样回放的线；status 只是
+// 输出 item 的生成状态位，回传没有信息量。
 func responsesReasoningItem(r ReasoningItem) map[string]any {
-	item := map[string]any{"type": "reasoning"}
-	if r.FromSummary {
-		item["summary"] = []responsesContentPart{
+	item := map[string]any{
+		"type": "reasoning",
+		"summary": []responsesContentPart{
 			{Type: "summary_text", Text: r.Content},
-		}
-		item["content"] = []any{}
-	} else {
-		item["summary"] = []any{}
-		item["content"] = []responsesContentPart{
+		},
+		"content": []responsesContentPart{
 			{Type: "reasoning_text", Text: r.Content},
-		}
+		},
 	}
 	if r.ID != "" {
 		item["id"] = r.ID
@@ -317,17 +314,14 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 	}
 	endReason()
 	// 兜底：终态没给 reasoning item（个别上游只发 delta 不发终态）时，用累积文本补一条，
-	// 否则这次思考既不上屏也没落盘。已有终态时以终态为准，不重复添加。形态随实际收到的
-	// 那派 delta：明文优先（比摘要完整），只有摘要 delta 时才标 FromSummary。
+	// 否则这次思考既不上屏也没落盘。已有终态时以终态为准，不重复添加。两派 delta 混发
+	// 时取明文桶（比摘要完整），只有摘要桶非空才用摘要。
 	if len(msg.ReasoningItems) == 0 {
 		switch {
 		case reasonPlain.Len() > 0:
 			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{Content: reasonPlain.String()})
 		case reasonSummary.Len() > 0:
-			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
-				Content:     reasonSummary.String(),
-				FromSummary: true,
-			})
+			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{Content: reasonSummary.String()})
 		}
 	}
 	msg.Usage = usage
@@ -356,28 +350,23 @@ func applyCompletedOutput(msg *Message, output *[]responsesOutputItem, hasDelta 
 			tc.Function.Name = item.Name
 			tc.Function.Arguments = item.Arguments
 		case "reasoning":
-			text, fromSummary := reasoningItemText(item.Content, item.Summary)
 			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
-				ID:          item.ID,
-				Content:     text,
-				FromSummary: fromSummary,
+				ID:      item.ID,
+				Content: reasoningItemText(item.Content, item.Summary),
 			})
 		}
 	}
 }
 
-// reasoningItemText 从 reasoning item 的两种形态里取正文，并回报取自哪一种。
+// reasoningItemText 从 reasoning item 的两种下发形态里取正文。
 // 明文 reasoning_text 优先：它内容更完整（摘要只是模型的自我总结）。某条流的
-// reasoning_text 缺失或为空时回落 summary_text——反过来不成立，摘要形态的上游
+// reasoning_text 缺失或为空时回落 summary_text——反过来不成立，摘要派上游
 // 根本不下发明文。两个都没内容时返回空串，调用方按「无思维链」处理。
-func reasoningItemText(content, summary []responsesContentText) (string, bool) {
+func reasoningItemText(content, summary []responsesContentText) string {
 	if text := joinReasoningParts(content, "reasoning_text"); text != "" {
-		return text, false
+		return text
 	}
-	if text := joinReasoningParts(summary, "summary_text"); text != "" {
-		return text, true
-	}
-	return "", false
+	return joinReasoningParts(summary, "summary_text")
 }
 
 func joinReasoningParts(parts []responsesContentText, want string) string {
