@@ -13,6 +13,13 @@ import (
 type ReasoningItem struct {
 	ID      string `json:"id,omitempty"`
 	Content string `json:"content,omitempty"`
+
+	// FromSummary 记录这条思维链在上游是「摘要形态」（summary[].summary_text）还是
+	// 「明文形态」（content[].reasoning_text）。两种形态在真实上游并存：GLM / DeepSeek /
+	// LongCat 发明文 reasoning_text，Kimi / 火山方舟 / opencode 发摘要 summary_text。
+	// 回传时按收到的形态原样构造，避免把摘要塞进 content 或反之（上游会 400 或静默丢弃）。
+	// 旧会话文件无此键 → false → 明文形态，与历史行为一致。
+	FromSummary bool `json:"from_summary,omitempty"`
 }
 
 type Message struct {

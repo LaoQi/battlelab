@@ -24,6 +24,10 @@ type mockStep struct {
 	usage         *Usage
 	reasoning     string
 	reasoningDone string
+	// reasoningForm 指定 reasoning item 的形态：空值 / "plain" 为明文形态
+	// （content[].reasoning_text，GLM / DeepSeek / LongCat），"summary" 为摘要形态
+	// （summary[].summary_text，Kimi / 火山方舟 / opencode）。正文始终取 reasoning 字段。
+	reasoningForm string
 	rawSSE        []string
 	hold          time.Duration
 }
@@ -214,6 +218,9 @@ func (m *mockLLM) handleResponses(w http.ResponseWriter, r *http.Request) {
 		if step.reasoningDone == "summary" {
 			variant = "response.reasoning_summary_text"
 		}
+		if step.reasoningDone == "" && step.reasoningForm == "summary" {
+			variant = "response.reasoning_summary_text"
+		}
 		runes := []rune(step.reasoning)
 		for i := 0; i < len(runes); i += 2 {
 			end := i + 2
@@ -226,11 +233,7 @@ func (m *mockLLM) handleResponses(w http.ResponseWriter, r *http.Request) {
 		case "text", "summary":
 			send(variant+".done", map[string]any{"text": step.reasoning})
 		case "item":
-			send("response.output_item.done", map[string]any{"item": map[string]any{
-				"type":    "reasoning",
-				"id":      "rs_test",
-				"content": []map[string]any{{"type": "reasoning_text", "text": step.reasoning}},
-			}})
+			send("response.output_item.done", map[string]any{"item": step.reasoningItem()})
 		}
 	}
 	runes := []rune(step.content)
@@ -244,11 +247,7 @@ func (m *mockLLM) handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	var output []map[string]any
 	if step.reasoning != "" {
-		output = append(output, map[string]any{
-			"type":    "reasoning",
-			"id":      "rs_test",
-			"content": []map[string]any{{"type": "reasoning_text", "text": step.reasoning}},
-		})
+		output = append(output, step.reasoningItem())
 	}
 	if step.content != "" {
 		output = append(output, map[string]any{
@@ -293,6 +292,22 @@ func (m *mockLLM) handleResponses(w http.ResponseWriter, r *http.Request) {
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+// reasoningItem 按 step 的形态设置造终态 reasoning item。summary 形态模拟
+// Kimi / 火山方舟 / opencode（正文在 summary[].summary_text），默认模拟
+// GLM / DeepSeek / LongCat（正文在 content[].reasoning_text）。两者都显式给数组，
+// 与真实上游一致（另一侧为空数组）。
+func (s mockStep) reasoningItem() map[string]any {
+	item := map[string]any{"type": "reasoning", "id": "rs_test"}
+	if s.reasoningForm == "summary" {
+		item["summary"] = []map[string]any{{"type": "summary_text", "text": s.reasoning}}
+		item["content"] = []any{}
+		return item
+	}
+	item["content"] = []map[string]any{{"type": "reasoning_text", "text": s.reasoning}}
+	item["summary"] = []any{}
+	return item
 }
 
 func usageToResponses(u *Usage) any {

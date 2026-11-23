@@ -82,17 +82,7 @@ func buildResponsesInput(messages []Message, detail string) (string, []any) {
 				if r.Content == "" {
 					continue
 				}
-				item := map[string]any{
-					"type":    "reasoning",
-					"summary": []any{},
-					"content": []responsesContentPart{
-						{Type: "reasoning_text", Text: r.Content},
-					},
-				}
-				if r.ID != "" {
-					item["id"] = r.ID
-				}
-				items = append(items, item)
+				items = append(items, responsesReasoningItem(r))
 			}
 			if m.Content != "" {
 				items = append(items, map[string]any{
@@ -120,6 +110,29 @@ func buildResponsesInput(messages []Message, detail string) (string, []any) {
 		}
 	}
 	return instructions, items
+}
+
+// responsesReasoningItem 把一条历史思维链还原成回传用的 reasoning item。
+// 形态随来源：摘要形态放进 summary[].summary_text（上游对 summary 缺失会报
+// 「expected an array」），明文形态放进 content[].reasoning_text。两侧都显式给数组，
+// 空的另一侧用 [] 占位——逐字节稳定，且归一化形态会被部分上游拒收。
+func responsesReasoningItem(r ReasoningItem) map[string]any {
+	item := map[string]any{"type": "reasoning"}
+	if r.FromSummary {
+		item["summary"] = []responsesContentPart{
+			{Type: "summary_text", Text: r.Content},
+		}
+		item["content"] = []any{}
+	} else {
+		item["summary"] = []any{}
+		item["content"] = []responsesContentPart{
+			{Type: "reasoning_text", Text: r.Content},
+		}
+	}
+	if r.ID != "" {
+		item["id"] = r.ID
+	}
+	return item
 }
 
 func responsesTools(defs []ToolDef) []responsesTool {
@@ -156,6 +169,10 @@ type responsesOutputItem struct {
 	Name      string                 `json:"name"`
 	Arguments string                 `json:"arguments"`
 	Content   []responsesContentText `json:"content"`
+	// Summary 是 reasoning item 的摘要形态正文。真实上游分成两派：GLM / DeepSeek /
+	// LongCat 把正文放在 content[].reasoning_text，Kimi / 火山方舟 / opencode 放在
+	// summary[].summary_text。两者可能同时出现（另一侧为空数组），故都要解析。
+	Summary []responsesContentText `json:"summary"`
 }
 
 type responsesUsage struct {
@@ -191,6 +208,10 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 	var usage *Usage
 	var hasDelta bool
 	start := time.Now()
+	// 思维链 delta 的本地累积，仅作终态缺失时的兜底（见流结束处）。正常情况下
+	// 正文以 response.completed 的终态 reasoning item 为准，这里不参与构造。
+	var reasonBuf strings.Builder
+	var reasonFromSummary bool
 
 	reasonOpen := false
 	endReason := func() {
@@ -220,6 +241,10 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 				return nil
 			}
 			reasonOpen = true
+			reasonBuf.WriteString(d.Delta)
+			if strings.Contains(ev.Type, "summary") {
+				reasonFromSummary = true
+			}
 			sink.Emit(Event{Kind: EventReasoning, Text: d.Delta})
 		case "response.reasoning_text.done", "response.reasoning_summary_text.done":
 			endReason()
@@ -287,6 +312,14 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 		return nil, err
 	}
 	endReason()
+	// 兜底：终态没给 reasoning item（个别上游只发 delta 不发终态）时，用累积文本补一条，
+	// 否则这次思考既不上屏也没落盘。已有终态时以终态为准，不重复添加。
+	if reasonBuf.Len() > 0 && len(msg.ReasoningItems) == 0 {
+		msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
+			Content:     reasonBuf.String(),
+			FromSummary: reasonFromSummary,
+		})
+	}
 	msg.Usage = usage
 	msg.Duration = time.Since(start)
 	return msg, nil
@@ -313,18 +346,34 @@ func applyCompletedOutput(msg *Message, output *[]responsesOutputItem, hasDelta 
 			tc.Function.Name = item.Name
 			tc.Function.Arguments = item.Arguments
 		case "reasoning":
+			text, fromSummary := reasoningItemText(item.Content, item.Summary)
 			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
-				ID:      item.ID,
-				Content: reasoningText(item.Content),
+				ID:          item.ID,
+				Content:     text,
+				FromSummary: fromSummary,
 			})
 		}
 	}
 }
 
-func reasoningText(parts []responsesContentText) string {
+// reasoningItemText 从 reasoning item 的两种形态里取正文，并回报取自哪一种。
+// 明文 reasoning_text 优先：它内容更完整（摘要只是模型的自我总结）。某条流的
+// reasoning_text 缺失或为空时回落 summary_text——反过来不成立，摘要形态的上游
+// 根本不下发明文。两个都没内容时返回空串，调用方按「无思维链」处理。
+func reasoningItemText(content, summary []responsesContentText) (string, bool) {
+	if text := joinReasoningParts(content, "reasoning_text"); text != "" {
+		return text, false
+	}
+	if text := joinReasoningParts(summary, "summary_text"); text != "" {
+		return text, true
+	}
+	return "", false
+}
+
+func joinReasoningParts(parts []responsesContentText, want string) string {
 	var b strings.Builder
 	for _, p := range parts {
-		if p.Type == "reasoning_text" {
+		if p.Type == want {
 			b.WriteString(p.Text)
 		}
 	}

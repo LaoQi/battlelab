@@ -755,3 +755,197 @@ func TestResponsesStreamReasoningEndEvents(t *testing.T) {
 		}
 	})
 }
+
+// 摘要形态（Kimi / 火山方舟 / opencode）：正文在 summary[].summary_text，
+// 流式事件名是 response.reasoning_summary_text.*。曾经只认 content[].reasoning_text，
+// 导致 Content 恒空、落盘后 reasoning_items 只剩 id（2026-11-23 实测确认）。
+func TestResponsesSummaryFormCapturesContent(t *testing.T) {
+	m, cfg := responsesLLM(t, mockStep{reasoning: "先想了想", reasoningForm: "summary", content: "答案是 42"})
+	var streamed strings.Builder
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}},
+		EventSink(func(e Event) {
+			if e.Kind == EventReasoning {
+				streamed.WriteString(e.Text)
+			}
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streamed.String() != "先想了想" {
+		t.Errorf("摘要形态思维链事件: %q", streamed.String())
+	}
+	if len(msg.ReasoningItems) != 1 {
+		t.Fatalf("reasoning items 数: %d", len(msg.ReasoningItems))
+	}
+	got := msg.ReasoningItems[0]
+	if got.Content != "先想了想" {
+		t.Errorf("摘要形态正文应落进 Content: %+v", got)
+	}
+	if !got.FromSummary {
+		t.Errorf("摘要形态应标记 FromSummary: %+v", got)
+	}
+	if got.ID != "rs_test" {
+		t.Errorf("摘要形态应保留 id: %+v", got)
+	}
+	// 回传必须仍是摘要形态，不能塞进 content（上游会报 input[].summary: expected an array）。
+	if len(m.rawReqs) != 1 {
+		t.Fatalf("请求数: %d", len(m.rawReqs))
+	}
+}
+
+// 明文形态（GLM / DeepSeek / LongCat）：正文在 content[].reasoning_text。
+// 与摘要形态是并存的两派，改动后必须仍然优先取明文。
+func TestResponsesPlainFormPrefersContent(t *testing.T) {
+	_, cfg := responsesLLM(t, mockStep{reasoning: "明文推理", content: "好"})
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ReasoningItems) != 1 || msg.ReasoningItems[0].Content != "明文推理" {
+		t.Fatalf("明文形态正文: %+v", msg.ReasoningItems)
+	}
+	if msg.ReasoningItems[0].FromSummary {
+		t.Errorf("明文形态不应标记 FromSummary: %+v", msg.ReasoningItems[0])
+	}
+}
+
+// 同一 item 两侧都有内容时优先明文 reasoning_text（它比摘要完整）。
+func TestResponsesReasoningPrefersPlainOverSummary(t *testing.T) {
+	text, fromSummary := reasoningItemText(
+		[]responsesContentText{{Type: "reasoning_text", Text: "明文全文"}},
+		[]responsesContentText{{Type: "summary_text", Text: "摘要"}},
+	)
+	if text != "明文全文" || fromSummary {
+		t.Errorf("应优先明文: text=%q fromSummary=%v", text, fromSummary)
+	}
+	// 明文侧为空数组时回落摘要（真实上游的空侧就是 []）。
+	text, fromSummary = reasoningItemText(
+		[]responsesContentText{},
+		[]responsesContentText{{Type: "summary_text", Text: "摘要"}},
+	)
+	if text != "摘要" || !fromSummary {
+		t.Errorf("应回落摘要: text=%q fromSummary=%v", text, fromSummary)
+	}
+	// 两侧都空 → 空串且不是摘要形态。
+	if text, fromSummary = reasoningItemText(nil, nil); text != "" || fromSummary {
+		t.Errorf("两侧均空应得空串: text=%q fromSummary=%v", text, fromSummary)
+	}
+}
+
+// 摘要形态历史回传时，正文必须进 summary[].summary_text，而不是 content。
+func TestResponsesReplaySummaryForm(t *testing.T) {
+	m, cfg := responsesLLM(t, mockStep{content: "ok"})
+	history := []Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "ok", ReasoningItems: []ReasoningItem{
+			{ID: "rs_sum", Content: "摘要推理", FromSummary: true},
+		}},
+	}
+	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := m.rawReqs[0]["input"].([]any)
+	var rs map[string]any
+	for _, it := range input {
+		if item, ok := it.(map[string]any); ok && item["type"] == "reasoning" {
+			rs = item
+		}
+	}
+	if rs == nil {
+		t.Fatal("应回传 reasoning item")
+	}
+	summary, _ := rs["summary"].([]any)
+	if len(summary) != 1 {
+		t.Fatalf("摘要形态回传 summary 应非空: %v", rs)
+	}
+	part := summary[0].(map[string]any)
+	if part["type"] != "summary_text" || part["text"] != "摘要推理" {
+		t.Errorf("摘要原文回传: %v", part)
+	}
+	if content, _ := rs["content"].([]any); len(content) != 0 {
+		t.Errorf("摘要形态回传不应带 content 正文: %v", rs["content"])
+	}
+	if rs["id"] != "rs_sum" {
+		t.Errorf("应保留 id: %v", rs)
+	}
+}
+
+// 旧会话文件没有 from_summary 键 → 按明文形态回传，与历史行为一致（向后兼容）。
+func TestResponsesReplayLegacyItemDefaultsToPlain(t *testing.T) {
+	var legacy ReasoningItem
+	if err := json.Unmarshal([]byte(`{"id":"rs_old","content":"旧推理"}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.FromSummary {
+		t.Error("旧文件缺 from_summary 时应为明文形态")
+	}
+	m, cfg := responsesLLM(t, mockStep{content: "ok"})
+	history := []Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "ok", ReasoningItems: []ReasoningItem{legacy}},
+	}
+	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := m.rawReqs[0]["input"].([]any)
+	for _, it := range input {
+		item, ok := it.(map[string]any)
+		if !ok || item["type"] != "reasoning" {
+			continue
+		}
+		content, _ := item["content"].([]any)
+		if len(content) != 1 {
+			t.Fatalf("旧条目应走明文形态: %v", item)
+		}
+		if p := content[0].(map[string]any); p["type"] != "reasoning_text" || p["text"] != "旧推理" {
+			t.Errorf("旧条目明文回传: %v", p)
+		}
+		return
+	}
+	t.Fatal("未回传 reasoning item")
+}
+
+// 兜底：个别上游只发 reasoning delta、终态不给 reasoning item。此时正文必须
+// 靠本地累积补回来，否则这次思考既不上屏也不落盘（等于静默丢弃）。
+func TestResponsesReasoningDeltaFallbackWithoutTerminalItem(t *testing.T) {
+	_, cfg := responsesLLM(t, mockStep{rawSSE: []string{
+		reasoningDelta("只有增量没有终态"),
+		`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"好"}
+
+`,
+		"data: [DONE]\n\n",
+	}})
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ReasoningItems) != 1 {
+		t.Fatalf("终态缺失时应由累积兜底补一条: %+v", msg.ReasoningItems)
+	}
+	if msg.ReasoningItems[0].Content != "只有增量没有终态" {
+		t.Errorf("兜底正文: %q", msg.ReasoningItems[0].Content)
+	}
+	if msg.ReasoningItems[0].FromSummary {
+		t.Errorf("明文 delta 兜底不应标记为摘要形态: %+v", msg.ReasoningItems[0])
+	}
+}
+
+// 有终态 item 时不得重复添加（累积只作兜底）。
+func TestResponsesReasoningNoDuplicateWhenTerminalPresent(t *testing.T) {
+	_, cfg := responsesLLM(t, mockStep{reasoning: "想过了", content: "好"})
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ReasoningItems) != 1 {
+		t.Fatalf("有终态时不应重复添加: %+v", msg.ReasoningItems)
+	}
+	if msg.ReasoningItems[0].Content != "想过了" {
+		t.Errorf("应以终态为准: %q", msg.ReasoningItems[0].Content)
+	}
+}

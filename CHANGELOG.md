@@ -1,3 +1,39 @@
+## 2026-11-23 fix(agent): responses 线兼容思维链的两种上游形态，摘要形态不再被整段丢弃
+
+**症状**：会话 jsonl 里 `reasoning_items` 大面积只剩 `{"id":"rs_…"}`，正文为空——28 个会话文件中
+25 个完全没有思维链正文，1844 条 reasoning item 里 1703 条（92%）只剩 id。
+
+**根因**：`responsesOutputItem` 没有 `summary` 字段，`reasoningText` 又只认
+`p.Type == "reasoning_text"`。而真实上游把正文分两派下发：
+
+| 形态 | 正文位置 | 流式事件 | 供应商（实测） |
+|---|---|---|---|
+| 明文 | `content[].reasoning_text` | `response.reasoning_text.*` | GLM / DeepSeek / LongCat |
+| 摘要 | `summary[].summary_text` | `response.reasoning_summary_text.*` | Kimi / 火山方舟 / opencode |
+
+摘要派的 item 解析后 `Content` 恒为空，`omitempty` 一落盘就只剩 id。此前测试一直绿，
+是因为 `mock_test.go` 按同一个错误假设只造明文形态，实现与 mock 一起错了。
+
+- **两形态都收**（`llm_responses.go`）：`responsesOutputItem` 增 `Summary`；新的
+  `reasoningItemText` 优先取明文 `reasoning_text`（比摘要完整），明文侧为空才回落
+  `summary_text`，并回报来源形态。
+- **回传形态随来源**（`ReasoningItem.FromSummary`，jsonl 键 `from_summary`）：摘要形态放进
+  `summary[].summary_text`，明文放进 `content[].reasoning_text`，另一侧显式给空数组。
+  不能归一化——摘要塞进 `content` 会被上游以 `input[].summary: expected an array` 拒收
+  （已实测）。旧会话无该键 → 明文形态，向后兼容。
+- **delta 兜底**：个别上游只发 reasoning delta、终态不给 reasoning item，此时用 delta 的
+  本地累积补一条，避免这次思考既不落盘也不回传。
+- **测试**：`mockStep.reasoningForm` 增摘要形态造流；新增 7 个用例（两形态捕获、明文优先、
+  两形态回传、旧条目向后兼容、delta 兜底、有终态不重复）。**变异复验 4 处**（去掉 summary
+  回落、回传忽略来源形态、去掉 delta 兜底、兜底误加重复）全部由对应用例拦下。
+  另用真实上游做端到端验证：Kimi 与火山方舟线走摘要、GLM 线走明文，均正确捕获并回传成功。
+
+**顺带修正一处口径**：原先认为回传 reasoning 的收益是「维持前缀缓存」，实测（回传与不回传的
+`cached_tokens` 都是 256）并不成立。真实收益是**思考延续**：不回传时摘要派供应商会静默降级为
+`reasoning_tokens: 0`（DeepSeek 系不报错、只掉质量）。故本项按正确性守，不按省 token 守。
+
+**注意**：已丢失的正文无法恢复（上游摘要未落盘），修复只对之后的轮次生效。
+
 ## 2026-11-19 fix(tools/shell)!: 宿主协议改为传递宿主形态路径，外部命令在 Windows 上恢复可用
 
 v0.4.0 把外部命令改由会话宿主进程承载（`fd2d757`）后，Windows 上**所有外部命令**失效
