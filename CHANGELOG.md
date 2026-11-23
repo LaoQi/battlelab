@@ -1,3 +1,34 @@
+## 2026-11-24 fix(agent): 复核思维链两形态的兼容面，delta 兜底按形态分桶
+
+对 `d8c6ee4` 的真实兼容面做了一轮实测复核（经内网聚合网关，5 家上游 6 条线：DeepSeek / GLM /
+LongCat / Kimi / 火山方舟 / Opencode），修正两处与实测不符的口径与一处兜底形态判定缺陷。
+
+**形态矩阵（入站）**：明文派 `content[].reasoning_text`（DeepSeek / GLM / LongCat），摘要派
+`summary[].summary_text`（Kimi / 火山方舟 / Opencode），与 `d8c6ee4` 表格一致；chat 线除 GLM 外
+都用 `delta.reasoning_content`（GLM 的 chat 端点不返回思维链，上游侧需 `thinking` 参数）。
+
+**回传接受度（出站，6 条线 × 5 类形态）**：
+
+- 按来源形态回传、两形态互换、只给一侧（另一侧键缺失）、无 `id`、跨供应商 id+形态（3×4）：
+  实测全部 200，上游对文本侧错配普遍宽容。
+- **唯一硬失败**：opencode 线对 `summary` 键缺失（含旧落盘只剩 `id` 的条目）报
+  `input[].summary: expected an array`。`responsesReasoningItem` 两形态都显式给数组已规避；
+  空正文条目在 `buildResponsesInput` 里跳过，不会撞上。
+- 故「摘要塞进 content 会被拒收」的说法不成立：错配虽 200，仍按来源回传以免丢掉形态语义。
+
+**回传收益复核**：完整回传 / 不回传 / 空占位三档的 `reasoning_tokens` 分别为 23–55 / 19–30 /
+4–9（k3 空占位最低），不支持「不回传即降级为 0」；支持「空条目比不回传更糟」，与空正文条目
+跳过不回传的做法一致。
+
+**兜底形态修正**（`llm_responses.go`）：原先 delta 累积用单个 builder，且一收到
+`reasoning_summary_text` 就整体标 `FromSummary`——两派 delta 混发时会把两段正文拼成一段、
+形态也标错。改为明文/摘要两桶累积，兜底时明文优先（与终态解析 `reasoningItemText` 同序），
+只有摘要桶非空才标 `FromSummary`。新增 2 个用例（混发取明文、纯摘要标形态），变异复验 2 处
+（合并单桶、摘要优先）均由对应用例拦下。
+
+**未覆盖的风险**：OpenAI 官方 `/responses` 未接入未测——官方在 `store: false` 下要求 reasoning
+item 原样回传（含 `encrypted_content`），本项目只回传文本、丢弃该字段，接官方线大概率 400。
+
 ## 2026-11-23 fix(agent): responses 线兼容思维链的两种上游形态，摘要形态不再被整段丢弃
 
 **症状**：会话 jsonl 里 `reasoning_items` 大面积只剩 `{"id":"rs_…"}`，正文为空——28 个会话文件中
@@ -19,8 +50,9 @@
   `summary_text`，并回报来源形态。
 - **回传形态随来源**（`ReasoningItem.FromSummary`，jsonl 键 `from_summary`）：摘要形态放进
   `summary[].summary_text`，明文放进 `content[].reasoning_text`，另一侧显式给空数组。
-  不能归一化——摘要塞进 `content` 会被上游以 `input[].summary: expected an array` 拒收
-  （已实测）。旧会话无该键 → 明文形态，向后兼容。
+  硬约束只有一条：`summary` 键必须存在且为数组（缺失时 opencode 线报
+  `input[].summary: expected an array`，见下方 2026-11-24 复核）。旧会话无该键 → 明文形态，
+  向后兼容。
 - **delta 兜底**：个别上游只发 reasoning delta、终态不给 reasoning item，此时用 delta 的
   本地累积补一条，避免这次思考既不落盘也不回传。
 - **测试**：`mockStep.reasoningForm` 增摘要形态造流；新增 7 个用例（两形态捕获、明文优先、
@@ -28,9 +60,11 @@
   回落、回传忽略来源形态、去掉 delta 兜底、兜底误加重复）全部由对应用例拦下。
   另用真实上游做端到端验证：Kimi 与火山方舟线走摘要、GLM 线走明文，均正确捕获并回传成功。
 
-**顺带修正一处口径**：原先认为回传 reasoning 的收益是「维持前缀缓存」，实测（回传与不回传的
-`cached_tokens` 都是 256）并不成立。真实收益是**思考延续**：不回传时摘要派供应商会静默降级为
-`reasoning_tokens: 0`（DeepSeek 系不报错、只掉质量）。故本项按正确性守，不按省 token 守。
+**顺带修正一处口径**：回传 reasoning 的收益不在前缀缓存（回传与不回传的 `cached_tokens` 都是
+256，不成立）。当时认为收益是**思考延续**（不回传时摘要派供应商静默降级为 `reasoning_tokens: 0`）；
+2026-11-24 复核显示该定量结论在网关路径下不成立（不回传 19–30、完整回传 23–55），只有
+**上传空 reasoning item** 时 k3 明显更低（4–9）——即「空条目比不回传更糟」。故本项按正确性守、
+不按省 token 守，空正文条目继续跳过不回传。
 
 **注意**：已丢失的正文无法恢复（上游摘要未落盘），修复只对之后的轮次生效。
 

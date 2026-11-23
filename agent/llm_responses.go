@@ -113,9 +113,11 @@ func buildResponsesInput(messages []Message, detail string) (string, []any) {
 }
 
 // responsesReasoningItem 把一条历史思维链还原成回传用的 reasoning item。
-// 形态随来源：摘要形态放进 summary[].summary_text（上游对 summary 缺失会报
-// 「expected an array」），明文形态放进 content[].reasoning_text。两侧都显式给数组，
-// 空的另一侧用 [] 占位——逐字节稳定，且归一化形态会被部分上游拒收。
+// 形态随来源：摘要形态放进 summary[].summary_text，明文形态放进 content[].reasoning_text。
+// 两侧都显式给数组，空的另一侧用 [] 占位——这是上游唯一的硬约束：opencode 线对
+// 缺 summary 键（或其值为 null）的 reasoning item 报 input[].summary: expected an array
+// （2026-11-24 实测，唯一 400 路径）。文本放错数组在实测的 DeepSeek / GLM / Kimi /
+// 火山方舟上宽容（200），但仍按来源形态回传：错配会丢掉「明文还是摘要」的语义。
 func responsesReasoningItem(r ReasoningItem) map[string]any {
 	item := map[string]any{"type": "reasoning"}
 	if r.FromSummary {
@@ -210,8 +212,9 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 	start := time.Now()
 	// 思维链 delta 的本地累积，仅作终态缺失时的兜底（见流结束处）。正常情况下
 	// 正文以 response.completed 的终态 reasoning item 为准，这里不参与构造。
-	var reasonBuf strings.Builder
-	var reasonFromSummary bool
+	// 两形态分桶：同一家上游通常只发一派，但混发时按「明文优先」择用，与终态解析
+	// （reasoningItemText）同序——合并成一桶会把两派正文拼成一段、形态也标错。
+	var reasonPlain, reasonSummary strings.Builder
 
 	reasonOpen := false
 	endReason := func() {
@@ -241,9 +244,10 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 				return nil
 			}
 			reasonOpen = true
-			reasonBuf.WriteString(d.Delta)
 			if strings.Contains(ev.Type, "summary") {
-				reasonFromSummary = true
+				reasonSummary.WriteString(d.Delta)
+			} else {
+				reasonPlain.WriteString(d.Delta)
 			}
 			sink.Emit(Event{Kind: EventReasoning, Text: d.Delta})
 		case "response.reasoning_text.done", "response.reasoning_summary_text.done":
@@ -313,12 +317,18 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 	}
 	endReason()
 	// 兜底：终态没给 reasoning item（个别上游只发 delta 不发终态）时，用累积文本补一条，
-	// 否则这次思考既不上屏也没落盘。已有终态时以终态为准，不重复添加。
-	if reasonBuf.Len() > 0 && len(msg.ReasoningItems) == 0 {
-		msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
-			Content:     reasonBuf.String(),
-			FromSummary: reasonFromSummary,
-		})
+	// 否则这次思考既不上屏也没落盘。已有终态时以终态为准，不重复添加。形态随实际收到的
+	// 那派 delta：明文优先（比摘要完整），只有摘要 delta 时才标 FromSummary。
+	if len(msg.ReasoningItems) == 0 {
+		switch {
+		case reasonPlain.Len() > 0:
+			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{Content: reasonPlain.String()})
+		case reasonSummary.Len() > 0:
+			msg.ReasoningItems = append(msg.ReasoningItems, ReasoningItem{
+				Content:     reasonSummary.String(),
+				FromSummary: true,
+			})
+		}
 	}
 	msg.Usage = usage
 	msg.Duration = time.Since(start)

@@ -788,7 +788,8 @@ func TestResponsesSummaryFormCapturesContent(t *testing.T) {
 	if got.ID != "rs_test" {
 		t.Errorf("摘要形态应保留 id: %+v", got)
 	}
-	// 回传必须仍是摘要形态，不能塞进 content（上游会报 input[].summary: expected an array）。
+	// 回传必须仍是摘要形态：文本错配虽被实测上游宽容（200），但摘要进 content 会丢掉
+	// 「这是摘要」的语义；硬约束只有 summary 键必须存在（见 TestResponsesMixedDeltaFallback）。
 	if len(m.rawReqs) != 1 {
 		t.Fatalf("请求数: %d", len(m.rawReqs))
 	}
@@ -947,5 +948,71 @@ func TestResponsesReasoningNoDuplicateWhenTerminalPresent(t *testing.T) {
 	}
 	if msg.ReasoningItems[0].Content != "想过了" {
 		t.Errorf("应以终态为准: %q", msg.ReasoningItems[0].Content)
+	}
+}
+
+// 两派 delta 混发且终态缺 reasoning item 时的兜底：不能把明文与摘要拼成一段，
+// 也不能因为「收到过 summary delta」就把整段标成摘要形态。按终态解析同序取明文优先。
+func TestResponsesMixedDeltaFallbackPrefersPlain(t *testing.T) {
+	_, cfg := responsesLLM(t, mockStep{rawSSE: []string{
+		`event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","delta":"明文段"}
+
+`,
+		`event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"摘要段"}
+
+`,
+		`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"好"}
+
+`,
+		"data: [DONE]\n\n",
+	}})
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ReasoningItems) != 1 {
+		t.Fatalf("兜底应只补一条 reasoning item: %+v", msg.ReasoningItems)
+	}
+	got := msg.ReasoningItems[0]
+	if got.Content != "明文段" {
+		t.Errorf("混发时应取明文段、不与摘要拼接: %q", got.Content)
+	}
+	if got.FromSummary {
+		t.Errorf("取自明文 delta 的兜底不应标记摘要形态: %+v", got)
+	}
+}
+
+// 只有摘要 delta、终态缺 reasoning item：兜底必须标 FromSummary，
+// 否则回传时会以明文形态塞进 content，丢掉「这是摘要」的来源语义。
+func TestResponsesSummaryDeltaFallbackMarksSummary(t *testing.T) {
+	_, cfg := responsesLLM(t, mockStep{rawSSE: []string{
+		`event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","delta":"摘要段"}
+
+`,
+		`event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"好"}
+
+`,
+		"data: [DONE]\n\n",
+	}})
+	msg, err := NewClient(cfg, nil).ChatStream(context.Background(),
+		[]Message{{Role: "user", Content: "hi"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ReasoningItems) != 1 {
+		t.Fatalf("兜底应补一条 reasoning item: %+v", msg.ReasoningItems)
+	}
+	got := msg.ReasoningItems[0]
+	if got.Content != "摘要段" {
+		t.Errorf("兜底正文: %q", got.Content)
+	}
+	if !got.FromSummary {
+		t.Errorf("摘要 delta 兜底应标记摘要形态: %+v", got)
 	}
 }
