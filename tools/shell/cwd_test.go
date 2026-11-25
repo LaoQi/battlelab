@@ -68,10 +68,10 @@ func TestRunShellCwdEffective(t *testing.T) {
 	if got != normShellPath(evalDirTrim(t, want)) {
 		t.Fatalf("cwd 未生效: got %q want %q; res=%+v", got, want, res)
 	}
-	if res.Cwd != dir {
+	if res.Cwd != filepath.ToSlash(dir) {
 		t.Errorf("Cwd 字段: got %q want %q", res.Cwd, dir)
 	}
-	if !strings.Contains(res.String(), "cwd: "+dir+"\n") {
+	if !strings.Contains(res.String(), "cwd: "+filepath.ToSlash(dir)+"\n") {
 		t.Errorf("结果应含 cwd 行: %q", res.String())
 	}
 }
@@ -82,7 +82,7 @@ func TestRunShellCwdRelative(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := testShellTool(t, func(cfg *Config) { cfg.Workspace = func() string { return cwd } }).run(context.Background(), request{Command: "pwd", TimeoutSec: 10, Cwd: "."})
-	if res.Cwd != cwd {
+	if res.Cwd != filepath.ToSlash(cwd) {
 		t.Errorf("相对路径应按会话启动目录解析: got %q want %q", res.Cwd, cwd)
 	}
 	got := normShellPath(evalDirTrim(t, shellStdout(res)))
@@ -120,7 +120,7 @@ func TestRunShellInteractiveCwd(t *testing.T) {
 	if c.dir != dir {
 		t.Errorf("full 子进程 dir = %q want %q", c.dir, dir)
 	}
-	if res.Cwd != dir {
+	if res.Cwd != filepath.ToSlash(dir) {
 		t.Errorf("Cwd = %q want %q", res.Cwd, dir)
 	}
 	if !c.full || !c.released {
@@ -135,7 +135,7 @@ func TestRunShellCwdRelativeToWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := testShellTool(t, func(cfg *Config) { cfg.Workspace = func() string { return ws } }).run(context.Background(), request{Command: "pwd", TimeoutSec: 10, Cwd: "sub"})
-	if res.Cwd != sub {
+	if res.Cwd != filepath.ToSlash(sub) {
 		t.Fatalf("Cwd = %q want %q", res.Cwd, sub)
 	}
 	want, err := filepath.EvalSymlinks(sub)

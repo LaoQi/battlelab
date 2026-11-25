@@ -1,3 +1,40 @@
+## 2026-11-25 fix(vbash)!: Windows 路径三段形态闭环，argv 真转换与 `/tmp` 映射
+
+**行为变化（仅 Windows；POSIX 恒等无变化）**：脚本可见面统一成宿主形态正斜杠——
+`pwd`/`$PWD`/`$OLDPWD`/`cd -`/`~`/`command -v|-V`/`export`|`set` 列表显示 `C:/Users/x`（原为内部形态
+`/c/Users/x`）；`$TMP`/`$TEMP`/`$APPDATA` 同批纳入；`run_shell` 的 `Result.Cwd` 用同一形态
+（`filepath.ToSlash`）。出站方向：`argv[1:]` 里确凿的内部形态（`/d/x`、`//server/share`、`/tmp`）
+翻成宿主形态再交给外部程序；`/tmp` 从「进程当前盘根 `\tmp`」改为映射 `%TEMP%`；子进程 `PATH`
+逐段 `;` 拼接（盘符冒号不再误切）。收紧 `run_shell` 的 `cwd` 参数：接受 vbash 自己宣传的 `/d/…` 形态。
+
+**为什么**：Windows 上路径转换只做了一半——只翻 `argv[0]` 与 `cmd.Dir`，而工具描述把「做了一半」
+说成「做完了」。真机会话（136 会话 / 1458 次 vbash `run_shell`）里原生工具把 `/d/x` 按「当前盘相对」
+解释，读错文件、**写错目录**，是本轮唯一的数据安全项。修法不是要求模型换写法（那条路已被数据推翻），
+而是让解释器对外的路径形态唯一：内部形态（`/c/…`，`plat.FromHost` 归一，盘符小写）／对外形态
+（`C:/…`，`DisplayPath`）／出站形态（`C:\…`，`plat.ToHost`+`plat.Arg`）。完整评估与逐项决策见
+`issue/vbash-windows-path-design.md`（R1 方案，状态转「已实施」）。
+
+**实现要点**：`platformOps` 新增 `SplitPath`/`Display`/`Arg` 三个钩子（均有平台无关缺省）；新增
+`PathList`（`Var.Value` 仍是 PATH 真相，数组只在消费点解析）与导出 `DisplayPath`/`HostPathArg`；
+`Env` 新增 `LookupDisplay`（脚本可见面取宿主形态，内部消费者继续 `Lookup`，宿主形态不回流内部状态）；
+未引用上下文里 `X:\…` 的反斜杠会静默吞掉，词法阶段给一条提示（**不改语义**，与 bash 一致，上限 16 条）。
+提示链路修掉两处实现缺陷：非 ASCII 单字母（`š:\x`）曾被 `byte(rune)` 截断误报；命令替换内部的提示
+曾只挂在子 `List` 上、`printWarnings` 永不打印。
+
+**回退开关**：`Config.NoArgvHost` 只关 `argv` 翻译（线上出现「参数被误翻」时止血），对外形态与
+`/tmp` 映射不受影响。
+
+**测试**：新增 8 组 Windows 用例（PATH 盘符冒号切分、`windowsHostArg` 形态矩阵 + `hostArgv` 端到端、
+`DisplayPath` 矩阵与 `pwd`/`$PWD`/`cd -`/`$(pwd)` 往返、`/tmp` 落点与 `/tmpfoo` 边界、TMP/TEMP/APPDATA
+三形态一致、`cwd` 参数接受 `/d/…`、警告触发与不触发，含命令替换内与非 ASCII 两类回归）；4 个既有用例
+改为形态无关断言（`filepath.ToSlash`/`DisplayPath`）。Windows 真机：`vbash` 包由 3 条失败收敛到仅 1 条
+既有计时 flaky，`tools/shell` 修复 2 条 Cwd 形态失败。Linux 侧 `go test ./...`、`GOOS=windows vet` +
+逐包测试编译、`make cross` 全绿。
+
+**已知限制**：目录名里字面含 `;` 的 PATH 段会被切开（Windows 下极罕见，旧实现同样无法处理）；
+内部形态对 `/tmp` 有双名（`/tmp` 与 `$TMP` 归一后字符串不等，但同目录）；`DisplayPath` 对非盘符绝对
+路径（msys 的 `/usr/bin`）按「当前盘根」渲染，与执行侧 `Arg` 刻意不翻的口径不一致，仅影响显示面。
+
 ## 2026-11-24 fix(agent)!: 思维链回传改为双写 + 原样 id，删除 `ReasoningItem.FromSummary`
 
 **BREAKING**：删除公开字段 `ReasoningItem.FromSummary`（v0.5.1 引入）。jsonl 键 `from_summary` 不再写入；旧文件里的

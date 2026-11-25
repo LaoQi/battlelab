@@ -15,6 +15,9 @@ func TestWindowsFromHost(t *testing.T) {
 		{`c:\`, "/c"},
 		{`\\server\share\f`, "//server/share/f"},
 		{"/already/posix", "/already/posix"},
+		// F5：内部形态的盘符输入统一小写
+		{"/D/per", "/d/per"},
+		{"/D", "/d"},
 		{"", ""},
 	}
 	for _, c := range cases {

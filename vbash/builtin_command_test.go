@@ -127,19 +127,19 @@ func TestCommandPathLookupRelativeForms(t *testing.T) {
 	writeTool(t, filepath.Join(dir, "sub"), name, true)
 	cases := []struct{ path, wantV, wantVerbose string }{
 		// 只削末尾一个 '/'：`sub//` → `sub//t1`（bash 口径，不 clean）
-		{"sub", "sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
-		{"sub/", "sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
-		{"sub//", "sub//" + name + "\n", "t1 is DIR/sub//" + name + "\n"},
-		{"./sub", "./sub/" + name + "\n", "t1 is DIR/sub/" + name + "\n"},
-		{"sub/.", "sub/./" + name + "\n", "t1 is DIR/sub/./" + name + "\n"},
+		{"sub", "sub/" + name + "\n", name + " is DIR/sub/" + name + "\n"},
+		{"sub/", "sub/" + name + "\n", name + " is DIR/sub/" + name + "\n"},
+		{"sub//", "sub//" + name + "\n", name + " is DIR/sub//" + name + "\n"},
+		{"./sub", "./sub/" + name + "\n", name + " is DIR/sub/" + name + "\n"},
+		{"sub/.", "sub/./" + name + "\n", name + " is DIR/sub/./" + name + "\n"},
 	}
 	for _, c := range cases {
-		wantV := strings.ReplaceAll(c.wantV, "DIR", dir)
+		wantV := strings.ReplaceAll(c.wantV, "DIR", filepath.ToSlash(dir))
 		got := runWithPath(t, dir, c.path, `command -v `+name)
 		if got.stdout != wantV {
 			t.Errorf("PATH=%q → -v 得 %q，期望 %q", c.path, got.stdout, wantV)
 		}
-		wantVerbose := strings.ReplaceAll(c.wantVerbose, "DIR", dir)
+		wantVerbose := strings.ReplaceAll(c.wantVerbose, "DIR", filepath.ToSlash(dir))
 		got = runWithPath(t, dir, c.path, `command -V `+name)
 		if got.stdout != wantVerbose {
 			t.Errorf("PATH=%q → -V 得 %q，期望 %q", c.path, got.stdout, wantVerbose)
@@ -245,7 +245,8 @@ func TestCommandOptionParsing(t *testing.T) {
 		t.Errorf("-vV 应由 -V 生效，实得 %q", got.stdout)
 	}
 	lines := strings.Split(strings.TrimSuffix(got.stdout, "\n"), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], " is ") || !strings.HasPrefix(lines[1], "/") {
+	absLike := len(lines) == 2 && (strings.HasPrefix(lines[1], "/") || (len(lines[1]) > 1 && lines[1][1] == ':'))
+	if len(lines) != 2 || !strings.Contains(lines[0], " is ") || !absLike {
 		t.Errorf("-vV/-Vv 顺序语义错，实得 %q", got.stdout)
 	}
 	// `--` 终止选项
@@ -296,7 +297,7 @@ func TestCommandExecuteSkipsFunctions(t *testing.T) {
 	if got := runScript(t, dir, `command echo hi`); got.stdout != "hi\n" {
 		t.Errorf("`command echo hi` 应为 hi，实得 %q", got.stdout)
 	}
-	if got := runScript(t, dir, `command cd /tmp && pwd`); got.stdout != "/tmp\n" {
+	if got := runScript(t, dir, `command cd /tmp && pwd`); got.stdout != DisplayPath(plat.FromHost("/tmp"))+"\n" {
 		t.Errorf("`command cd` 应切目录，实得 %q", got.stdout)
 	}
 }
@@ -324,7 +325,7 @@ func TestCommandPVUsesDefaultPath(t *testing.T) {
 	}
 	// 不加 -p 时能在自定义 PATH 里找到
 	got = runWithPath(t, dir, customPath, `command -v ptool`)
-	if want := dir + "/" + name + "\n"; got.stdout != want {
+	if want := filepath.ToSlash(dir) + "/" + name + "\n"; got.stdout != want {
 		t.Errorf("不加 -p 应命中自定义 PATH，实得 %q，期望 %q", got.stdout, want)
 	}
 	// 执行态同理：-p 只查默认 PATH，自定义 PATH 里的 ptool 不该被执行到

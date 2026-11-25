@@ -8,6 +8,28 @@ import (
 type List struct {
 	Items []*ListItem
 	Pos   Pos
+	// Warnings 是词法阶段就能确定、只提示不改变语义的告警（如未引用的 X:\ 形态）。
+	Warnings []Warning
+}
+
+// Warning 是一条执行前的提示：位置 + 说明。
+type Warning struct {
+	Pos Pos
+	Msg string
+}
+
+// mergeWarnings 把子 List（命令替换内部）的警告并入父 List：只有顶层 List 会
+// 被 printWarnings 打印，不合并就等于静默丢弃。上限与词法阶段一致。
+func mergeWarnings(dst *List, src []Warning) {
+	if dst == nil {
+		return
+	}
+	for _, w := range src {
+		if len(dst.Warnings) >= maxWarnings {
+			return
+		}
+		dst.Warnings = append(dst.Warnings, w)
+	}
 }
 
 type ListItem struct {

@@ -212,11 +212,11 @@ func (x *expansion) applyTilde(w Word) []Segment {
 
 func (x *expansion) tildeHome(prefix string) string {
 	if prefix == "~" {
-		return x.env.Home()
+		return DisplayPath(x.env.Home())
 	}
 	switch prefix {
 	case "~+":
-		return x.env.Dir()
+		return DisplayPath(x.env.Dir())
 	}
 	return ""
 }
@@ -272,7 +272,7 @@ func (x *expansion) parameter(seg Segment) (string, error) {
 		if seg.Inner == "@" || seg.Inner == "*" {
 			return strings.Join(x.env.Args(), " "), nil
 		}
-		value, _ := x.env.Lookup(seg.Inner)
+		value, _ := x.env.LookupDisplay(seg.Inner)
 		return value, nil
 	}
 	return x.bracedAt(seg.Inner, seg.Mode, seg.Pos)
@@ -380,7 +380,7 @@ func (x *expansion) bracedAt(expr string, mode WordMode, pos Pos) (string, error
 		}
 		return strings.Join(x.env.Args(), " "), nil
 	}
-	value, set := x.env.Lookup(spec.name)
+	value, set := x.env.LookupDisplay(spec.name)
 	if x.env.NounSet && !set {
 		if name, ok := bracedUnboundName(spec); ok {
 			return "", x.runs.unboundAt(name, pos)

@@ -16,6 +16,9 @@ func (r *Runner) runExternal(argv []string, io *IO, pos Pos) (int, error) {
 	if !ok {
 		return code, nil
 	}
+	if !r.noArgvHost {
+		argv = r.hostArgv(argv)
+	}
 	return r.spawn(full, argv, io, pos)
 }
 
@@ -56,6 +59,31 @@ func (r *Runner) resolveExternal(name string, io *IO, pos Pos) (string, int, boo
 	return resolved, 0, true
 }
 
+// hostArgv 把 argv[1:] 里的内部形态绝对路径翻成宿主形态（F2 兜底）。
+//
+// argv[0] 必须保持用户原文：它同时是子进程看到的 $0（见 Handler 注释）。
+// 只翻 plat.Arg 认的形态；返回原切片表示没有可翻的项，避免无谓分配。
+func (r *Runner) hostArgv(argv []string) []string {
+	if plat.Arg == nil || len(argv) < 2 {
+		return argv
+	}
+	var out []string
+	for i := 1; i < len(argv); i++ {
+		h, ok := plat.Arg(argv[i])
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = append([]string(nil), argv...)
+		}
+		out[i] = h
+	}
+	if out == nil {
+		return argv
+	}
+	return out
+}
+
 func (r *Runner) lookPath(name string) (string, error) {
 	if isPathLike(name) {
 		host := r.hostPath(name)
@@ -76,7 +104,7 @@ func (r *Runner) lookPath(name string) (string, error) {
 	if hasAnySuffix(name, names) {
 		names = []string{""}
 	}
-	for _, dir := range strings.Split(pathVar, ":") {
+	for _, dir := range ParsePathList(pathVar) {
 		if dir == "" {
 			dir = "."
 		}

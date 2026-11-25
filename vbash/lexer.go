@@ -13,6 +13,17 @@ type lexer struct {
 	unterminated []UnterminatedHeredoc
 	pendingStart bool
 	expectDelim  *delimExpect
+	warns        []Warning
+}
+
+// maxWarnings 是单次解析输出的提示上限（词法阶段与子 List 合并共用），
+// 避免长脚本或大量命令替换把 stderr 刷满。
+const maxWarnings = 16
+
+func (l *lexer) warn(pos Pos, msg string) {
+	if len(l.warns) < maxWarnings {
+		l.warns = append(l.warns, Warning{Pos: pos, Msg: msg})
+	}
 }
 
 type delimExpect struct {
@@ -275,6 +286,11 @@ type wordBuilder struct {
 	litMode WordMode
 	litPos  Pos
 	litOpen bool
+
+	// 已累积文本的最后两个 rune，供 endsWithDriveColon 做 O(1) 判断
+	// （每次反斜杠都 String() 一遍会让长脚本退化到 O(n^2)）。
+	prev, last rune
+	nrun       int
 }
 
 func newWordBuilder(mode WordMode, pos Pos) *wordBuilder {
@@ -303,9 +319,22 @@ func (w *wordBuilder) flushLiteral() {
 	w.segs = append(w.segs, Segment{Kind: SegLiteral, Text: text, Mode: w.litMode, Pos: w.litPos})
 }
 
+// endsWithDriveColon 报告已累积文本是否以「单字母 + 冒号」结尾（X: 形态）。
+func (w *wordBuilder) endsWithDriveColon() bool {
+	return w.nrun >= 2 && isASCIILetterRune(w.prev) && w.last == ':'
+}
+
+func (w *wordBuilder) pushRune(r rune) {
+	w.prev, w.last = w.last, r
+	w.nrun++
+}
+
 func (w *wordBuilder) literal(s string) {
 	if s == "" {
 		return
+	}
+	for _, r := range s {
+		w.pushRune(r)
 	}
 	w.text.WriteString(s)
 	if !w.litOpen || w.litMode != w.mode {
@@ -318,6 +347,7 @@ func (w *wordBuilder) literal(s string) {
 }
 
 func (w *wordBuilder) literalRune(r rune) {
+	w.pushRune(r)
 	w.text.WriteRune(r)
 	if !w.litOpen || w.litMode != w.mode {
 		w.flushLiteral()
@@ -331,6 +361,8 @@ func (w *wordBuilder) literalRune(r rune) {
 func (w *wordBuilder) segment(kind SegmentKind, text, inner string, pos Pos) {
 	w.flushLiteral()
 	w.text.WriteString(text)
+	// 段边界重置末尾状态：变量/替换段之后的内容不与段前字面拼成 X: 形态。
+	w.prev, w.last, w.nrun = 0, 0, 0
 	w.segs = append(w.segs, Segment{Kind: kind, Text: text, Inner: inner, Mode: w.mode, Pos: pos})
 }
 
@@ -371,6 +403,11 @@ func (l *lexer) readWord(start Pos) (Token, error) {
 				continue
 			}
 			c := l.advance()
+			// F7：未引用的 X:\... 里反斜杠会被当转义符吞掉，路径静默变形。
+			// 只提示，不改语义（bash 行为一致）。
+			if c != '/' && w.endsWithDriveColon() {
+				l.warn(pos, "反斜杠在未引用上下文中被当作转义符（X:\\... 会变成 X:...）；路径请用 / 或写在引号里")
+			}
 			w.setMode(ModeLiteral, pos)
 			w.literalRune(c)
 			w.setMode(ModeUnquoted, l.pos())

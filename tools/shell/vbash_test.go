@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -185,7 +186,7 @@ func TestVbashCwdFieldKeptOnlyWhenExplicit(t *testing.T) {
 	}
 	dir := t.TempDir()
 	explicit := testVbashTool(t).run(context.Background(), request{Command: "true", Cwd: dir, TimeoutSec: 10})
-	if explicit.Cwd != dir {
+	if explicit.Cwd != filepath.ToSlash(dir) {
 		t.Errorf("显式 cwd 应回填: %q", explicit.Cwd)
 	}
 }

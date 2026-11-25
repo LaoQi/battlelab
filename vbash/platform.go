@@ -8,16 +8,21 @@ import (
 )
 
 type platformOps struct {
-	DevNull          []string
-	DevNullFold      bool
-	DefaultPath      string
-	PathSep          string
-	ExecSuffixes     []string
-	FromHost         func(string) string
-	ToHost           func(cwd, target string) string
-	IsExec           func(name string, st os.FileInfo) bool
-	MatchName        func(pattern, name string) bool
-	Argv0            func(string) string
+	DevNull      []string
+	DevNullFold  bool
+	DefaultPath  string
+	PathSep      string
+	SplitPath    func(string) []string
+	ExecSuffixes []string
+	FromHost     func(string) string
+	ToHost       func(cwd, target string) string
+	Display      func(string) string
+	IsExec       func(name string, st os.FileInfo) bool
+	MatchName    func(pattern, name string) bool
+	Argv0        func(string) string
+	// Arg 把 argv[1:] 里的内部形态绝对路径翻成宿主形态；ok=false 表示原样。
+	// nil 表示该平台不需要（POSIX）。
+	Arg              func(string) (string, bool)
 	DriveOf          func(string) (string, bool)
 	ExitCode         func(*exec.ExitError) int
 	SignalNumber     func(*exec.ExitError) int
@@ -38,6 +43,9 @@ func fillPlatform(p platformOps) platformOps {
 	if p.PathSep == "" {
 		p.PathSep = ":"
 	}
+	if p.SplitPath == nil {
+		p.SplitPath = func(s string) []string { return strings.Split(s, ":") }
+	}
 	if p.ExecSuffixes == nil {
 		p.ExecSuffixes = []string{""}
 	}
@@ -46,6 +54,9 @@ func fillPlatform(p platformOps) platformOps {
 	}
 	if p.ToHost == nil {
 		p.ToHost = func(_, target string) string { return target }
+	}
+	if p.Display == nil {
+		p.Display = identityPath
 	}
 	if p.IsExec == nil {
 		p.IsExec = func(_ string, st os.FileInfo) bool { return !st.IsDir() && st.Mode()&0o111 != 0 }
@@ -101,6 +112,27 @@ func isDevNull(target string) bool {
 
 func isASCIILetter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isASCIILetterRune 判 ASCII 字母。byte 版本对 rune 会截断（š 的低字节是 'a'），
+// 凡输入是 rune 的判定必须走这里。
+func isASCIILetterRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// DisplayPath 把内部形态路径渲染成对外形态：Windows 上是宿主形态（正斜杠），
+// POSIX 上恒等。只用于脚本可见的输出面（pwd、$PWD、cd -、~、command -v/-V、
+// export/set 列表）；内部消费者（cd - 的目标、PATH 查找）必须继续用内部形态。
+func DisplayPath(p string) string { return plat.Display(p) }
+
+// HostPathArg 把内部形态路径参数（Windows 的 /d/...、//server/share、/tmp）
+// 翻成宿主形态，供解释器以外的调用方使用（如 tools/shell 的 cwd 参数）。
+// POSIX 或非内部形态返回 ok=false，调用方保持原值。
+func HostPathArg(s string) (string, bool) {
+	if plat.Arg == nil {
+		return "", false
+	}
+	return plat.Arg(s)
 }
 
 func isPathLike(name string) bool {

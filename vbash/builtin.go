@@ -366,7 +366,7 @@ func builtinCd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 			return 1, nil
 		}
 		newDir = old
-		io.WriteString(io.Out, r.Env.Dir()+"\n")
+		io.WriteString(io.Out, DisplayPath(r.Env.Dir())+"\n")
 	default:
 		newDir = r.posixPath(target)
 	}
@@ -407,7 +407,7 @@ func builtinPwd(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 			dir = resolved
 		}
 	}
-	io.WriteString(io.Out, dir+"\n")
+	io.WriteString(io.Out, DisplayPath(dir)+"\n")
 	return 0, nil
 }
 
@@ -415,7 +415,7 @@ func builtinExport(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	args := argv[1:]
 	if len(args) == 0 {
 		for _, name := range r.Env.Names() {
-			v, _ := r.Env.Lookup(name)
+			v, _ := r.Env.LookupDisplay(name)
 			io.WriteString(io.Out, "declare -x "+name+"=\""+v+"\"\n")
 		}
 		return 0, nil
@@ -447,7 +447,7 @@ func builtinSet(r *Runner, argv []string, io *IO, pos Pos) (int, error) {
 	args := argv[1:]
 	if len(args) == 0 {
 		for _, name := range r.Env.Names() {
-			v, _ := r.Env.Lookup(name)
+			v, _ := r.Env.LookupDisplay(name)
 			io.WriteString(io.Out, name+"="+v+"\n")
 		}
 		return 0, nil

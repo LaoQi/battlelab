@@ -141,7 +141,10 @@ func (t *Tool) run(ctx context.Context, req request) *Result {
 func defaultCwd(res *Result, explicit bool) *Result {
 	if !explicit {
 		res.Cwd = ""
+		return res
 	}
+	// 与 vbash 的 pwd 同形态（正斜杠）：Windows 上 C:/a/b，POSIX 不变。
+	res.Cwd = filepath.ToSlash(res.Cwd)
 	return res
 }
 
@@ -157,6 +160,12 @@ func (t *Tool) resolveCwd(cwd string) (string, error) {
 		return "", nil
 	}
 	dir := cwd
+	// vbash 宣传的形态（/d/...）在 Windows 上既非绝对路径也 Stat 不到，先翻宿主形态。
+	if t.profile.Builtin {
+		if h, ok := vbash.HostPathArg(dir); ok {
+			dir = h
+		}
+	}
 	if dir == "~" || strings.HasPrefix(dir, "~/") {
 		if t.home == "" {
 			return "", fmt.Errorf(MsgBadCwd, cwd)
@@ -215,8 +224,9 @@ func describeVbash(plat shellPlatform, programs []string) string {
 	b.WriteString("命令按 bash 写法书写：路径统一用 / 分隔")
 	if plat.GOOS == "windows" {
 		b.WriteString("，盘符写作 /c/ 形式（c:/ 亦可），反斜杠只作转义符")
+		b.WriteString("；pwd 与 $PWD 显示 C:/... 形态，/c/... 与 /tmp 作为参数传给外部程序时自动转成宿主形态")
 	}
-	b.WriteString("；解释器在调用外部程序时自动转换成宿主形式。")
+	b.WriteString("。")
 	b.WriteString("读文件、搜索、文本处理等系统操作都用它。")
 	if len(programs) > 0 {
 		b.WriteString("可用程序: " + strings.Join(programs, ", "))

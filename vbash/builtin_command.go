@@ -160,7 +160,7 @@ func (r *Runner) commandPathLookup(name string, usePath bool) (commandHit, bool)
 	}
 	// fallback 记住第一个「非目录但不可执行」的候选，供全无命中可执行文件时回落。
 	var fallbackRel, fallbackAbs string
-	for _, dir := range strings.Split(pathVar, ":") {
+	for _, dir := range ParsePathList(pathVar) {
 		entry := dir
 		if entry == "" {
 			entry = "." // 空条目等价于当前目录
@@ -176,7 +176,7 @@ func (r *Runner) commandPathLookup(name string, usePath bool) (commandHit, bool)
 				continue
 			}
 			if plat.IsExec(host, st) {
-				return commandHit{short: rel, verbose: name + " is " + abs}, true
+				return commandHit{short: DisplayPath(rel), verbose: name + " is " + DisplayPath(abs)}, true
 			}
 			if fallbackRel == "" {
 				fallbackRel, fallbackAbs = rel, abs
@@ -184,7 +184,7 @@ func (r *Runner) commandPathLookup(name string, usePath bool) (commandHit, bool)
 		}
 	}
 	if fallbackRel != "" {
-		return commandHit{short: fallbackRel, verbose: name + " is " + fallbackAbs}, true
+		return commandHit{short: DisplayPath(fallbackRel), verbose: name + " is " + DisplayPath(fallbackAbs)}, true
 	}
 	return commandHit{}, false
 }

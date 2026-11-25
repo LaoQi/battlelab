@@ -37,6 +37,7 @@ type Runner struct {
 	loopNest      int
 	PipeFail      bool
 	XTrace        bool
+	noArgvHost    bool
 }
 
 // CmdState 描述一条外部命令相对终端的处境，随 ConfigureCmd 一起交给实现方。
@@ -98,6 +99,9 @@ type Config struct {
 	ConfigureCmd func(*exec.Cmd, CmdState)
 	CancelCmd    func(*exec.Cmd) error
 	Fence        *Fence
+	// NoArgvHost 关闭 argv 的宿主形态转换（F2 回退开关）。
+	// 零值 false = 开启转换：/d/x 等内部路径会翻成宿主形态再交给外部程序。
+	NoArgvHost bool
 }
 
 func NewRunner(ctx context.Context, cfg Config) *Runner {
@@ -131,6 +135,7 @@ func NewRunner(ctx context.Context, cfg Config) *Runner {
 		ConfigureCmd: cfg.ConfigureCmd,
 		CancelCmd:    cfg.CancelCmd,
 		fence:        cfg.Fence,
+		noArgvHost:   cfg.NoArgvHost,
 	}
 	out := cfg.Stdout
 	errw := cfg.Stderr
@@ -158,8 +163,19 @@ func (r *Runner) warnUnsupported(feature string, pos Pos) {
 	r.diagf(r.IO.Err, pos, "%s: %s: unsupported by vbash", feature, "not implemented")
 }
 
+// printWarnings 输出词法阶段收集的提示（只提示，不改变语义）。
+// errw 为 nil 时不输出（Config 允许不给 Stderr）。
+func (r *Runner) printWarnings(list *List, errw io.Writer) {
+	if list == nil || errw == nil {
+		return
+	}
+	for _, wn := range list.Warnings {
+		fmt.Fprintf(errw, "%s: line %d: 警告: %s\n", r.name(), r.lineOf(wn.Pos), wn.Msg)
+	}
+}
 func (r *Runner) RunList(list *List) (int, error) {
 	r.initJobs()
+	r.printWarnings(list, r.IO.Err)
 	code, err := r.runList(list, r.IO)
 	var exitReq ExitRequest
 	if err != nil && asExit(err, &exitReq) {

@@ -64,6 +64,7 @@ func (p *parser) parseSource() (*List, error) {
 		return nil, p.unexpected(tok)
 	}
 	p.lex.finishHeredocs()
+	list.Warnings = p.lex.warns
 	if err := resolveSubstitutions(list, p.depth); err != nil {
 		return nil, err
 	}
@@ -78,17 +79,17 @@ func resolveSubstitutions(list *List, depth int) error {
 		for _, pipe := range item.AndOr.Pipes {
 			for _, cmd := range pipe.Pipeline.Commands {
 				for i := range cmd.Words {
-					if err := resolveWord(&cmd.Words[i], depth); err != nil {
+					if err := resolveWord(&cmd.Words[i], depth, list); err != nil {
 						return err
 					}
 				}
 				for _, a := range cmd.Assigns {
-					if err := resolveWord(&a.Value, depth); err != nil {
+					if err := resolveWord(&a.Value, depth, list); err != nil {
 						return err
 					}
 				}
 				for _, r := range cmd.Redirs {
-					if err := resolveWord(&r.Target, depth); err != nil {
+					if err := resolveWord(&r.Target, depth, list); err != nil {
 						return err
 					}
 				}
@@ -108,7 +109,7 @@ func resolveSubstitutions(list *List, depth int) error {
 	return nil
 }
 
-func resolveWord(w *Word, depth int) error {
+func resolveWord(w *Word, depth int, parent *List) error {
 	for i := range w.Segments {
 		seg := &w.Segments[i]
 		if seg.Kind != SegCmdSub || seg.Sub != nil || seg.Inner == "" {
@@ -127,6 +128,7 @@ func resolveWord(w *Word, depth int) error {
 			return err
 		}
 		seg.Sub = list
+		mergeWarnings(parent, list.Warnings)
 	}
 	return nil
 }

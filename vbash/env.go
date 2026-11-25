@@ -34,6 +34,7 @@ func NewEnv() *Env {
 }
 
 func (e *Env) Set(name, value string, exported bool) {
+	value = internalVar(name, value)
 	if v, ok := e.vars[name]; ok {
 		v.Value = value
 		v.Exported = v.Exported || exported
@@ -43,6 +44,7 @@ func (e *Env) Set(name, value string, exported bool) {
 }
 
 func (e *Env) SetExported(name, value string) {
+	value = internalVar(name, value)
 	if v, ok := e.vars[name]; ok {
 		v.Value = value
 		v.Exported = true
@@ -90,6 +92,20 @@ func (e *Env) Lookup(name string) (string, bool) {
 	return v.Value, true
 }
 
+// LookupDisplay 返回脚本可见的形态：HOME/PWD/OLDPWD 渲染成宿主形态（Windows），
+// 其余与 Lookup 相同。内部消费者（cd -、PATH 查找、Env.Home/Dir）必须用 Lookup/
+// 字段本身，否则宿主形态会写进内部状态。PATH 不在此列：$PATH 暂保持内部形态。
+func (e *Env) LookupDisplay(name string) (string, bool) {
+	v, ok := e.Lookup(name)
+	if !ok {
+		return "", false
+	}
+	if pathVars[name] {
+		return DisplayPath(v), true
+	}
+	return v, true
+}
+
 func numericName(name string) (int, bool) {
 	if name == "" {
 		return 0, false
@@ -131,6 +147,11 @@ func (e *Env) Environ() []string {
 		if !v.Exported || name == "IFS" {
 			continue
 		}
+		if name == "PATH" {
+			out = append(out, "PATH="+strings.Join(ParsePathList(v.Value).Host(), plat.PathSep))
+			seen[name] = true
+			continue
+		}
 		out = append(out, name+"="+hostVar(name, v.Value))
 		seen[name] = true
 	}
@@ -141,12 +162,15 @@ func (e *Env) Environ() []string {
 	return out
 }
 
-var pathVars = map[string]bool{"HOME": true, "PWD": true, "OLDPWD": true}
+// pathVars 是需要做边界形态转换的路径类变量：内部形态（/c/...）与宿主形态
+// （C:\...）在注入/导出/展开时各取所需。PATH 不在其中（数组化后单独处理）。
+var pathVars = map[string]bool{
+	"HOME": true, "PWD": true, "OLDPWD": true,
+	"TMP": true, "TEMP": true, "APPDATA": true,
+}
 
 func hostVar(name, value string) string {
 	switch {
-	case name == "PATH":
-		return hostPathList(value)
 	case pathVars[name]:
 		return plat.ToHost(plat.FromHost(value), plat.FromHost(value))
 	}
@@ -156,27 +180,11 @@ func hostVar(name, value string) string {
 func internalVar(name, value string) string {
 	switch {
 	case name == "PATH":
-		return internalPathList(value)
+		return ParsePathList(value).String()
 	case pathVars[name]:
 		return plat.FromHost(value)
 	}
 	return value
-}
-
-func internalPathList(value string) string {
-	parts := strings.Split(value, plat.PathSep)
-	for i, part := range parts {
-		parts[i] = plat.FromHost(part)
-	}
-	return strings.Join(parts, ":")
-}
-
-func hostPathList(value string) string {
-	parts := strings.Split(value, ":")
-	for i, part := range parts {
-		parts[i] = plat.ToHost("", part)
-	}
-	return strings.Join(parts, plat.PathSep)
 }
 
 func (e *Env) markLocal(name string) {
