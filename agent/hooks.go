@@ -86,6 +86,22 @@ type AfterSaveHook interface {
 	AfterSave(ctx context.Context, in SaveInfo)
 }
 
+// agentCtxKey 是钩子 ctx 里承载 Agent 实例的私有键：只由 fire* 方法在调用钩子前注入，
+// 回合 ctx 本身（以及工具、LLM 请求拿到的 ctx）不带这个值。
+type agentCtxKey struct{}
+
+// FromContext 取出驱动本次钩子的 Agent 实例（只在钩子回调收到的 ctx 里可见）。
+// 钩子靠它调 Agent 公开方法完成自己的事（AppendNotice / RequestHandoff 等）。
+func FromContext(ctx context.Context) (*Agent, bool) {
+	a, ok := ctx.Value(agentCtxKey{}).(*Agent)
+	return a, ok
+}
+
+// hookCtx 给钩子 ctx 注入 Agent；只在 fire* 边界使用，不改写回合同一份 ctx。
+func (a *Agent) hookCtx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, agentCtxKey{}, a)
+}
+
 type hookSet struct {
 	beforeTurn    []BeforeTurnHook
 	beforeRequest []BeforeRequestHook
@@ -204,7 +220,7 @@ func (a *Agent) requestInfo(turn int) RequestInfo {
 }
 
 func (a *Agent) fireSession(kind SessionEventKind, h *Handoff) {
-	a.hooks.fireSession(context.Background(), SessionEvent{
+	a.hooks.fireSession(a.hookCtx(context.Background()), SessionEvent{
 		Kind:      kind,
 		SessionID: a.SessionID(),
 		Workspace: a.workspace,

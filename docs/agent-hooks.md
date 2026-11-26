@@ -37,6 +37,14 @@
 
 `AfterSave` 与 `SessionEvent` 不在回合上下文里（`AppendNotice`、`Fork` 等公开方法本身没有 ctx），这两类钩子收到 `context.Background()`，取消信号不适用；其余切点收到的是**回合 ctx**（回合被取消/中断时，钩子里发起的外部调用也随之取消）。
 
+**八个切点的 ctx 都携带驱动它的 `Agent`**，用 `agent.FromContext(ctx)` 取：
+
+```go
+a, ok := agent.FromContext(ctx)   // 只在钩子回调内为真
+```
+
+这个值由库在**钩子边界**注入（`hookCtx`），回合 ctx 本身不被改写：工具与 LLM 请求拿到的 ctx 里没有它，调用方传给 `Ask`/`Continue` 的 ctx 也不会被污染。钩子因此不必靠外层闭包捕获实例，`WithHooks` 可以先于 `New` 装配。
+
 ## 3 装配
 
 ```go
@@ -54,7 +62,7 @@ func WithHooks(hooks ...Hook) Option   // 仅 New 生效；多次调用累加
 - **同步、在发起 `Ask`/`Continue` 的同一 goroutine 上调用**：库不加锁、不保证并发语义
 - **可阻塞**：库不加超时、不做看门狗；钩子内耗时完全由调用方负责（要限时自己 `select ctx.Done()`）
 - **不得 panic 逃逸**：库不做 `recover`（与 `EventSink` 同一约定）
-- 钩子内**不得**调用会撕碎回合假设的方法：`NewSession`/`LoadSession`/`AdoptSession`/`Fork`/`SwitchWorkspace`/`SetModel`/`FreezeSession`。库不拦（调用方必然持有 `*Agent`，类型上封不住），属约定
+- 钩子内**不得**调用会撕碎回合假设的方法：`NewSession`/`LoadSession`/`AdoptSession`/`Fork`/`SwitchWorkspace`/`SetModel`/`FreezeSession`。库不拦（`FromContext(ctx)` 就能拿到完整实例，类型上封不住），属约定
 - 注入内容（`AppendNotice` 等）不需要额外保存：各方法自带落盘，下一轮构造请求时自然带上
 - 回合开始钩子在 ctx 已取消时仍会被调用（`BeforeTurn` 在 `Ask` 入口，库此处不判 ctx）；`BeforeRequest` 之前库会先判 `ctx.Err()` 并直接返回取消错误，故已取消的回合不会触发请求前钩子
 
@@ -73,12 +81,13 @@ type SaveInfo struct    { Session string; Messages int; Err error }
 - `BeforeTool`/`AfterTool` 传模型侧原始 `ToolCall` 与 `ToolResult`
 - `SaveInfo.Session` 在 `NoSave`（`-n`）下为空
 - `SessionEvent.Handoff` 仅在 `SessionHandoff` 时非空（已发生的交接事实）
+- 所有入参都是**只读快照**；要动手就自己取 ctx 里的实例调公开方法（见 §4）
 
 ## 6 典型用法
 
 | 需求 | 做法 |
 |---|---|
-| 上下文达阈值提醒 | `BeforeRequest` 里判 `Stats().Est` 与 `Stats().ContextTokens`，够阈则 `AppendNotice(...)` |
+| 上下文达阈值提醒 | `BeforeRequest` 里判 `Stats().Est` 与 `Stats().ContextTokens`，够阈则 `FromContext(ctx)` 取实例后 `AppendNotice(...)` |
 | 回合内触发转段（模型或调用方） | `BeforeRequest` 里 `RequestHandoff(summary, cont, ws)`（方法自带校验与 pending 语义，回合出口生效） |
 | 回合外强制复位 | 不用钩子：回合之间调 `ForceHandoff`（见 `force-handoff.md`，库用 `turning` 拒绝回合内调用） |
 | 回合耗时/用量记账 | `AfterTurn` 里读 `TurnInfo` 与 `Stats()` |

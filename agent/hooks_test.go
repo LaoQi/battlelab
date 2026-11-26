@@ -313,3 +313,101 @@ func TestHooksSkipRequestOnCanceledContext(t *testing.T) {
 		t.Errorf("ctx 已取消不应发出请求, got %d", len(m.reqs))
 	}
 }
+
+// ctxHook 只经 FromContext 拿 Agent（不靠闭包捕获），同时记录三个切点看到的值。
+type ctxHook struct {
+	request *Agent
+	session *Agent
+	save    *Agent
+	injects int
+}
+
+func (h *ctxHook) BeforeRequest(ctx context.Context, in RequestInfo) {
+	if a, ok := FromContext(ctx); ok {
+		h.request = a
+		if in.Turn == 0 {
+			h.injects++
+			_ = a.AppendNotice("ctx 注入")
+		}
+	}
+}
+
+func (h *ctxHook) SessionEvent(ctx context.Context, in SessionEvent) {
+	h.session, _ = FromContext(ctx)
+}
+
+func (h *ctxHook) AfterSave(ctx context.Context, in SaveInfo) {
+	h.save, _ = FromContext(ctx)
+}
+
+func TestHookContextCarriesAgent(t *testing.T) {
+	m := newMockLLM(t, mockStep{content: "ok"})
+	h := &ctxHook{}
+	a := newHandoffAgent(t, m, WithHooks(h))
+	if err := a.Ask(context.Background(), "问题", nil); err != nil {
+		t.Fatal(err)
+	}
+	if h.request != a {
+		t.Errorf("BeforeRequest 的 ctx 应带 Agent：%p != %p", h.request, a)
+	}
+	if h.save != a {
+		t.Errorf("AfterSave 的 ctx 应带 Agent：%p != %p", h.save, a)
+	}
+	if h.session != nil {
+		t.Errorf("本回合无会话边界，SessionEvent 不应被调用：%p", h.session)
+	}
+	if h.injects != 1 {
+		t.Fatalf("注入次数 = %d", h.injects)
+	}
+	// 注入来自 ctx 里的实例：本次请求末尾即是那行（不再靠外层闭包持有 Agent）。
+	msgs := hookMessages(t, m.reqs[0])
+	if got := hookMessageText(t, msgs[len(msgs)-1]); got != "ctx 注入" {
+		t.Errorf("请求末尾 %q", got)
+	}
+	if _, ok := FromContext(context.Background()); ok {
+		t.Error("普通 ctx 不应带 Agent")
+	}
+	a.NewSession()
+	if h.session != a {
+		t.Errorf("SessionEvent 的 ctx 也应带 Agent：%p != %p", h.session, a)
+	}
+}
+
+// ctxProbeTool 探测工具拿到的 ctx 是否被注入了 Agent。
+type ctxProbeTool struct{ saw []string }
+
+func (p *ctxProbeTool) Name() string { return "ctx_probe" }
+
+func (p *ctxProbeTool) Definition() ToolDef {
+	return NewToolDef(p.Name(), "测试桩：探测工具 ctx", `{"type":"object","properties":{}}`)
+}
+
+func (p *ctxProbeTool) Invoke(ctx context.Context, _ string) ToolResult {
+	if _, ok := FromContext(ctx); ok {
+		p.saw = append(p.saw, "tool")
+	}
+	return ToolResult{Text: "ok"}
+}
+
+func TestHookCtxNotLeakedOutsideHooks(t *testing.T) {
+	probe := &ctxProbeTool{}
+	m := newMockLLM(t,
+		mockStep{toolCalls: []mockToolCall{{id: "call_1", name: "ctx_probe", args: `{}`}}},
+		mockStep{content: "done"},
+	)
+	rec := &hookRecorder{}
+	a := newHandoffAgent(t, m, WithTools(probe), WithHooks(rec))
+	ctx := context.Background()
+	if err := a.Ask(ctx, "问题", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(probe.saw) != 0 {
+		t.Errorf("工具 ctx 不应带 Agent：%v", probe.saw)
+	}
+	if _, ok := FromContext(ctx); ok {
+		t.Error("调用方 ctx 不该带 Agent")
+	}
+	if rec.calls[0] != "beforeTurn" {
+		t.Errorf("首个钩子 = %q", rec.calls[0])
+	}
+}

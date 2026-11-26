@@ -12,7 +12,7 @@ tanya 与 ivan 共用的 agent 核心库（Go）。模块路径 `github.com/LaoQ
 - `agent`/`tools`/`ctty` 之间：`agent` 零内部依赖，`tools → agent + ctty`，`ctty` 零内部依赖；`tools` 不依赖任何 `render/*`
 - `agent` 的两条硬约束（沿用 tanya 口径）：事件扇出只有 `agent.Sinks`（装配期固定、同步串行、消费者不得阻塞/panic/反向调用）；会话文件 append-only + system 快照冻结是**优化手段**、非红线，不构成设计取舍依据
 - 交接有两条路，别混：模型自驱动的 `next_session`/`RequestHandoff`（回合内置 pending、仅正常回合出口落地）与外部强制的 `ForceHandoff`（回合外同步复位，库里用 `turning` 拒绝回合内调用）；落地共用 `settleHandoff`，`TakeHandoff` 只服务前者。见 `docs/session-handoff.md`、`docs/force-handoff.md`
-- 生命周期钩子只有 `agent.WithHooks`：**只认接口实现**（八个切点接口，一实例可同时实现多个、同切点顺序 = 注册顺序、`nil` 忽略、一个切点都没命中则 `New` 报错），装配期固定、无运行期注册；钩子**无返回值、不参与控制流**——通知/转段等写入一律走 `Agent` 公开方法，校验与时机由各方法自负（事件 = 出站观察面，钩子 = 入站时机面）；可阻塞（库不加超时）、不得 panic 逃逸、不得调 `NewSession`/`LoadSession`/`Fork`/`SwitchWorkspace` 等撕碎回合假设的方法。见 `docs/agent-hooks.md`
+- 生命周期钩子只有 `agent.WithHooks`：**只认接口实现**（八个切点接口，一实例可同时实现多个、同切点顺序 = 注册顺序、`nil` 忽略、一个切点都没命中则 `New` 报错），装配期固定、无运行期注册；钩子**无返回值、不参与控制流**——通知/转段等写入一律走 `Agent` 公开方法，校验与时机由各方法自负（事件 = 出站观察面，钩子 = 入站时机面）；钩子**经 `agent.FromContext(ctx)` 取驱动它的实例**调公开方法（值只在钩子边界的 ctx 里、工具与 LLM 请求的 ctx 不带）；可阻塞（库不加超时）、不得 panic 逃逸、不得调 `NewSession`/`LoadSession`/`Fork`/`SwitchWorkspace` 等撕碎回合假设的方法。见 `docs/agent-hooks.md`
 - 工具 = 调用方注入（`agent.WithTools` 保序在前）+ 自带 `next_session`/`agent_custom`（恒末两位）；装配期一次合成、运行期冻结，无运行期注册 API
 - 平台分片一律白名单：`linux`/`darwin`/`windows` 各一个装配文件，posix 共享实现落 `linux || darwin`，其余平台 stub；`make cross` 逐包编译测试二进制拦漏标
 - 测试包边界：需要上层包（如 `readline`）的集成用例放**调用方仓库**（tanya 的 `integration/`），不得在本库引入反向依赖

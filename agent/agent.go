@@ -217,7 +217,7 @@ func (a *Agent) save() error {
 	if a.store.disabled {
 		session = ""
 	}
-	a.hooks.fireAfterSave(context.Background(), SaveInfo{Session: session, Messages: len(a.history), Err: err})
+	a.hooks.fireAfterSave(a.hookCtx(context.Background()), SaveInfo{Session: session, Messages: len(a.history), Err: err})
 	return err
 }
 
@@ -356,7 +356,7 @@ func (a *Agent) Ask(ctx context.Context, input string, sink EventSink) error {
 	start := time.Now()
 	base := len(a.history)
 	a.history = append(a.history, Message{Role: "user", Content: input, TS: nowMS()})
-	a.hooks.fireBeforeTurn(ctx, a.turnStart(false, input))
+	a.hooks.fireBeforeTurn(a.hookCtx(ctx), a.turnStart(false, input))
 	err := a.ask(ctx, sink, base, base+1)
 	a.settleTurn(ctx, start, err, sink)
 	return err
@@ -371,7 +371,7 @@ func (a *Agent) Continue(ctx context.Context, sink EventSink) error {
 	defer func() { a.turning = false }()
 	start := time.Now()
 	base := len(a.history)
-	a.hooks.fireBeforeTurn(ctx, a.turnStart(true, ""))
+	a.hooks.fireBeforeTurn(a.hookCtx(ctx), a.turnStart(true, ""))
 	err := a.ask(ctx, sink, base, base)
 	a.settleTurn(ctx, start, err, sink)
 	return err
@@ -386,7 +386,7 @@ func (a *Agent) settleTurn(ctx context.Context, start time.Time, err error, sink
 		Interrupted: interrupted,
 	}
 	sink.Emit(Event{Kind: EventTurnEnd, Turn: info})
-	a.hooks.fireAfterTurn(ctx, info)
+	a.hooks.fireAfterTurn(a.hookCtx(ctx), info)
 	if err == nil {
 		a.applyHandoff()
 		return
@@ -424,7 +424,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 			return err
 		}
 		sink.Emit(Event{Kind: EventRequestStart})
-		a.hooks.fireBeforeRequest(ctx, a.requestInfo(turn))
+		a.hooks.fireBeforeRequest(a.hookCtx(ctx), a.requestInfo(turn))
 		start := time.Now()
 		resp, err := a.client.Request(ctx, LLMRequest{Messages: a.buildMessages(), Tools: a.tools.defs()}, sink)
 		info := ResponseInfo{Duration: time.Since(start)}
@@ -448,7 +448,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 		if resp.Usage != nil {
 			a.stats.record(resp.Usage)
 		}
-		a.hooks.fireAfterResponse(ctx, a.requestInfo(turn), info)
+		a.hooks.fireAfterResponse(a.hookCtx(ctx), a.requestInfo(turn), info)
 		if len(resp.ToolCalls) == 0 {
 			break
 		}
@@ -460,10 +460,10 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 				interactive = interactiveOf(tool, tc.Function.Arguments)
 			}
 			sink.Emit(Event{Kind: EventToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Interactive: interactive})
-			a.hooks.fireBeforeTool(ctx, tc)
+			a.hooks.fireBeforeTool(a.hookCtx(ctx), tc)
 			res := a.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
 			sink.Emit(Event{Kind: EventToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Result: res, Interactive: interactive})
-			a.hooks.fireAfterTool(ctx, tc, res)
+			a.hooks.fireAfterTool(a.hookCtx(ctx), tc, res)
 			a.history = append(a.history, Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,

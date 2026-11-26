@@ -1,3 +1,19 @@
+## 2026-11-26 feat(agent): 钩子 ctx 携带 `Agent`（`agent.FromContext`）
+
+钩子要在自己的时机做事（注入提醒、请求转段、记账），过去只能靠外面闭包捕获 `*Agent`——装配顺序被迫
+「先有 Agent 才能写钩子」的循环，库外也没法在钩子里拿到实例。改为**由库在钩子边界把实例放进 ctx**。
+
+- `agent/hooks.go`：私有键 `agentCtxKey{}` + `FromContext(ctx) (*Agent, bool)` + `Agent.hookCtx`；
+  `fire*` 八处调用点统一走 `a.hookCtx(ctx)`（`AfterSave`/`SessionEvent` 两处是
+  `hookCtx(context.Background())`，它们本就不在回合上下文里）
+- **只在钩子边界注入**：回合 ctx 本身不被改写，工具与 LLM 请求拿到的 ctx 不含该值（`context.WithValue`
+  返回新 ctx，调用方传入的 ctx 也不会被污染），用例锁住两条不泄漏路径
+- 约束不变：钩子仍**无返回值、不参与控制流**，仍不得调 `NewSession`/`LoadSession`/`Fork`/
+  `SwitchWorkspace` 等撕碎回合假设的方法——只是从「调用方必然持有 `*Agent`」变成「钩子里能取到」
+- 测试：`agent/hooks_test.go` +2（三个切点均取到同一实例、仅靠 ctx 里的实例注入且进本次请求、
+  工具 ctx 与调用方 ctx 均取不到）
+- 文档：`docs/agent-hooks.md`（§2 时机表补 ctx 条、§4 调用契约、§5 入参、§6 典型用法）、`AGENTS.md`
+
 ## 2026-11-26 feat(agent): 外部强制复位 `ForceHandoff`——一次调用完成摘要、旧会话落地与新会话成立
 
 模型自驱动的 `next_session` 只能在回合内请求、由回合出口生效，且依赖模型听话。常驻后台场景需要外部在
