@@ -42,7 +42,7 @@ agent 核心库：回合循环、LLM 双协议（chat / responses）、标准工
 ```
 输入 → Ask: history += user
   → [system 快照(冻结)] + history          ← 快照服务 prompt cache
-  → ChatStream ─┬─ chat:      wire 化 → POST /chat/completions (SSE)
+  → Request ────┬─ chat:      wire 化 → POST /chat/completions (SSE)
                 └─ responses: item 化 → POST /responses (SSE)
   → 流式事件（reasoning / content / tool_call）→ sink 扇出 + 消息累积
   → history += assistant
