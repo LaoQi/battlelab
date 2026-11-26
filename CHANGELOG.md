@@ -1,3 +1,38 @@
+## 2026-11-26 feat(agent): 生命周期钩子 `WithHooks`
+
+调用方在回合内的执行权此前只有一条通路（模型触发的 `Tool`），缺「调用方在固定时机做自己的事」的面子。
+新增通用钩子：库在八个时机把只读快照交给调用方，**无返回值、不参与控制流**——库不读取、不短路、不据此改变回合走向。
+
+- `agent/hooks.go`（新）：`Hook`（任意实例）、八个切点接口（`BeforeTurn`/`BeforeRequest`/`AfterResponse`/
+  `BeforeTool`/`AfterTool`/`AfterTurn`/`SessionEvent`/`AfterSave`）、`WithHooks`、入参 `TurnStart`/`RequestInfo`/
+  `SessionEvent`（六种 `SessionEventKind`）/`SaveInfo`
+- **只认接口实现**：`New` 里逐个类型断言登记，一实例可同时命中多个切点，同切点顺序 = 注册顺序；`nil` 忽略；
+  一个切点都没命中的实例 → `New` 返回 `不支持的生命周期钩子类型 %T`；装配期固定、无运行期注册、无适配器构造器
+- 调用契约：同步、与 `Ask` 同 goroutine、**可阻塞（库不加超时）**、不 `recover`（同 `EventSink` 约定）；
+  回合切点收到回合 ctx，`AfterSave`/`SessionEvent` 收 `context.Background()`（这些方法本身无 ctx）
+- 顺序：**事件先、钩子后**——`BeforeRequest` 在 `EventRequestStart` 之后、构造请求之前（注入内容能进本次请求）；
+  `AfterResponse` 在响应入 history 之后、工具执行之前；`AfterTurn` 在 `EventTurnEnd` 之后、交接应用之前
+- 接线：`Ask`/`Continue` 加 `BeforeTurn`；`runTurn` 循环头加 `ctx.Err()` 早退 + `BeforeRequest`（带本回合请求序号 `Turn`）；
+  响应落地后 `AfterResponse`；工具前后 `BeforeTool`/`AfterTool`；`settleTurn` 加 `AfterTurn`；`save` 加 `AfterSave`；
+  会话边界加 `SessionEvent`（`NewSession` 拆出内部 `newSession`，`loadWorkspace` 不再上报边界切点，避免构造期与
+  工作区切换重复触发）；`applyHandoff` 成功路径上报 `SessionHandoff`（带 `Handoff` 事实）
+- **两面正交**：钩子不携带任何业务概念（无 `Notice`/`Stop`/`Handoff` 字段）；通知、转段、落盘等动作一律走 `Agent`
+  既有公开方法（`AppendNotice`/`RequestHandoff`…），校验与时机由各方法自负。前一轮设计草案里的
+  `RequestDecision{Notice, Stop, Handoff}` 与「外部强制交接」入口整条撤销，随之**不再需要** `agent.HandoffNow`
+- 不做：返回值与控制流、运行期注册、顺序配置、写入校验、回合内注入防护（危险点只在文档划线）
+
+**行为变化（可观测）**：`runTurn` 每次请求前先判 `ctx.Err()`，故 ctx 已取消时不再发 `EventRequestStart`/
+`EventResponse`（直接返回取消错误）；回合结果与错误类型不变。
+
+**测试**（`agent/hooks_test.go` 9 例）：全切点调用序列与 `Turn` 计数（含构造期零调用）、跨实例注册顺序、未知类型
+`New` 报错、`nil` 忽略、`BeforeRequest` 注入的 `AppendNotice` 落在本次请求末尾（用户输入之后）、工具轮之后注入落在
+最后一条 `tool` 之后、会话边界五种 Kind + `SessionHandoff` 事实、`NoSave` 下照常触发且 `SaveInfo.Session` 为空、
+ctx 已取消时跳过 `BeforeRequest` 且不发请求。**验证**：`gofmt -l` 干净、`go build`/`vet ./...`、
+`go test ./...`（7 包）与 `go test -race ./agent/` 全绿、`make cross`（darwin + windows 的 vet 与逐包测试编译）通过。
+
+**文档**：`docs/agent-hooks.md`（新：定位与四面表、切点表、装配、调用契约、入参、典型用法、不做）、
+`docs/agent-event-seams.md`（加「事件是出站观察面、钩子是入站时机面」互指）、`AGENTS.md`（约束条 + 文档清单）。
+
 ## 2026-11-25 fix(vbash)!: Windows 路径三段形态闭环，argv 真转换与 `/tmp` 映射
 
 **行为变化（仅 Windows；POSIX 恒等无变化）**：脚本可见面统一成宿主形态正斜杠——

@@ -139,6 +139,7 @@ func (a *Agent) applyHandoff() {
 	a.stats.reset()
 	_ = a.save()
 	a.lastHandoff = &h
+	a.fireSession(SessionHandoff, &h)
 }
 
 func normalizeHandoffSummary(s string) string {

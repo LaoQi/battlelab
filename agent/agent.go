@@ -27,6 +27,7 @@ type Agent struct {
 	handoffPend  *pendingHandoff
 	lastHandoff  *Handoff
 	attachOps    AttachOps
+	hooks        *hookSet
 }
 
 type ResponseInfo struct {
@@ -41,6 +42,7 @@ type Options struct {
 	registered       []Tool
 	globalAgentsPath *string
 	attachOps        AttachOps
+	hooks            []Hook
 }
 
 type Option func(*Options)
@@ -77,6 +79,10 @@ func New(cfg *Config, opts ...Option) (*Agent, error) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	hooks, err := newHookSet(o.hooks)
+	if err != nil {
+		return nil, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -87,10 +93,11 @@ func New(cfg *Config, opts ...Option) (*Agent, error) {
 		globalPath = *o.globalAgentsPath
 	}
 	a := &Agent{cfg: cfg, workspace: cwd, home: home, basePrompt: o.systemPrompt,
-		registered: o.registered, globalAgents: globalPath, attachOps: o.attachOps}
+		registered: o.registered, globalAgents: globalPath, attachOps: o.attachOps, hooks: &hookSet{}}
 	if err := a.loadWorkspace(cwd, o.noSave); err != nil {
 		return nil, err
 	}
+	a.hooks = hooks
 	return a, nil
 }
 
@@ -109,7 +116,7 @@ func (a *Agent) loadWorkspace(dir string, noSave bool) error {
 	a.store = newSessionStore(sessionDir, archiveDir, dir, noSave)
 	a.tools = newToolRegistry(assembleTools(a.registered, a, a)...)
 	a.client = NewClient(a.cfg, a.tools.defs())
-	a.NewSession()
+	a.newSession()
 	a.store.refresh()
 	return nil
 }
@@ -122,7 +129,11 @@ func (a *Agent) SwitchWorkspace(dir string) error {
 	if target == a.workspace {
 		return fmt.Errorf(MsgSameWorkspace, shortPath(target))
 	}
-	return a.loadWorkspace(target, a.store.disabled)
+	if err := a.loadWorkspace(target, a.store.disabled); err != nil {
+		return err
+	}
+	a.fireSession(SessionSwitchWorkspace, nil)
+	return nil
 }
 
 func (a *Agent) resolveWorkspace(dir string) (string, error) {
@@ -186,6 +197,11 @@ func (a *Agent) LegacyPrompt() bool {
 }
 
 func (a *Agent) NewSession() {
+	a.newSession()
+	a.fireSession(SessionNew, nil)
+}
+
+func (a *Agent) newSession() {
 	a.history = nil
 	a.stats.reset()
 	a.prompt.reset()
@@ -195,7 +211,13 @@ func (a *Agent) NewSession() {
 }
 
 func (a *Agent) save() error {
-	return a.store.append(a.history, a.prompt.system())
+	err := a.store.append(a.history, a.prompt.system())
+	session := a.store.path()
+	if a.store.disabled {
+		session = ""
+	}
+	a.hooks.fireAfterSave(context.Background(), SaveInfo{Session: session, Messages: len(a.history), Err: err})
+	return err
 }
 
 func (a *Agent) LoadSession(id string) error {
@@ -208,6 +230,7 @@ func (a *Agent) LoadSession(id string) error {
 	a.stats.reset()
 	a.handoffPend = nil
 	a.lastHandoff = nil
+	a.fireSession(SessionLoad, nil)
 	return nil
 }
 
@@ -223,6 +246,7 @@ func (a *Agent) AdoptSession(file string) error {
 	a.stats.reset()
 	a.handoffPend = nil
 	a.lastHandoff = nil
+	a.fireSession(SessionAdopt, nil)
 	return nil
 }
 
@@ -296,6 +320,7 @@ func (a *Agent) Fork() (string, error) {
 	if err := a.save(); err != nil {
 		return "", err
 	}
+	a.fireSession(SessionFork, nil)
 	return a.store.id(), nil
 }
 
@@ -328,8 +353,9 @@ func (a *Agent) Ask(ctx context.Context, input string, sink EventSink) error {
 	start := time.Now()
 	base := len(a.history)
 	a.history = append(a.history, Message{Role: "user", Content: input, TS: nowMS()})
+	a.hooks.fireBeforeTurn(ctx, a.turnStart(false, input))
 	err := a.ask(ctx, sink, base, base+1)
-	a.settleTurn(start, err, sink)
+	a.settleTurn(ctx, start, err, sink)
 	return err
 }
 
@@ -340,19 +366,22 @@ func (a *Agent) Continue(ctx context.Context, sink EventSink) error {
 	}
 	start := time.Now()
 	base := len(a.history)
+	a.hooks.fireBeforeTurn(ctx, a.turnStart(true, ""))
 	err := a.ask(ctx, sink, base, base)
-	a.settleTurn(start, err, sink)
+	a.settleTurn(ctx, start, err, sink)
 	return err
 }
 
-func (a *Agent) settleTurn(start time.Time, err error, sink EventSink) {
+func (a *Agent) settleTurn(ctx context.Context, start time.Time, err error, sink EventSink) {
 	var ie *InterruptError
 	interrupted := errors.As(err, &ie)
-	sink.Emit(Event{Kind: EventTurnEnd, Turn: TurnInfo{
+	info := TurnInfo{
 		Duration:    time.Since(start),
 		Failed:      err != nil && !interrupted,
 		Interrupted: interrupted,
-	}})
+	}
+	sink.Emit(Event{Kind: EventTurnEnd, Turn: info})
+	a.hooks.fireAfterTurn(ctx, info)
 	if err == nil {
 		a.applyHandoff()
 		return
@@ -385,8 +414,12 @@ func (a *Agent) ask(ctx context.Context, sink EventSink, rollback, producedFrom 
 }
 
 func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
-	for {
+	for turn := 0; ; turn++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sink.Emit(Event{Kind: EventRequestStart})
+		a.hooks.fireBeforeRequest(ctx, a.requestInfo(turn))
 		start := time.Now()
 		resp, err := a.client.ChatStream(ctx, a.buildMessages(), sink)
 		info := ResponseInfo{Duration: time.Since(start)}
@@ -410,6 +443,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 		if resp.Usage != nil {
 			a.stats.record(resp.Usage)
 		}
+		a.hooks.fireAfterResponse(ctx, a.requestInfo(turn), info)
 		if len(resp.ToolCalls) == 0 {
 			break
 		}
@@ -421,8 +455,10 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 				interactive = interactiveOf(tool, tc.Function.Arguments)
 			}
 			sink.Emit(Event{Kind: EventToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Interactive: interactive})
+			a.hooks.fireBeforeTool(ctx, tc)
 			res := a.dispatch(ctx, tc.Function.Name, tc.Function.Arguments)
 			sink.Emit(Event{Kind: EventToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Result: res, Interactive: interactive})
+			a.hooks.fireAfterTool(ctx, tc, res)
 			a.history = append(a.history, Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,

@@ -54,6 +54,7 @@ const (
 	MsgBadWorkspace         = MsgErrPrefix + "工作区不存在或不是目录: %s"
 	MsgSameWorkspace        = MsgErrPrefix + "已在该工作区: %s"
 	MsgExportNoPath         = MsgErrPrefix + "导出需要目标路径"
+	MsgUnknownHookFmt       = "不支持的生命周期钩子类型 %T"
 )
 
 const (
