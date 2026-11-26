@@ -132,6 +132,8 @@ client := NewClient(cfg, ToolDefs(tool.profile))   // 工具清单随 client 定
 | `Option`/`NoSave`（`agent.go`） | `func(*Agent)`，选项在构造后应用 | `func(*Options)`（`Options{noSave, bridge}`），构造前算出，bridge 供 `newShellTool` 使用 |
 | `shell_test.go` | `RunShell(ctx, cmd, timeout)` | 测试内构造 runner 后 `run(...)` |
 
+> 2026-11-26 变更：上表 `NewClient(cfg, tools)` 这一行描述的是当时的形态；`NewClient` 现已去掉 `tools` 形参，请求形态由调用方逐次给出（`Client.Request(ctx, LLMRequest{Messages, Tools}, sink)`），见 `force-handoff.md` §4。
+
 ## 8. 删除 / 保留 / 新增
 
 **删除**（已完成，`rg` 归零）：`InitShell`、`ShellRuntime`、`shellRuntime`、`shellRuntimeMu`/`shellRuntimeCur`/`shellRuntimeSet`/`shellRuntimeErr`、`shellLookPath`、`resolveShellRuntime`、`RunShell`、`RunShellResult`、`resolveShellCwd`（→ `shellTool.resolveCwd` 方法）、`InitTTYBridge`/`currentTTYBridge`/`ttyBridgeMu`/`ttyBridgeCur`。

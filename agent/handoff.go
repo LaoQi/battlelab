@@ -56,8 +56,8 @@ func (a *Agent) RequestHandoff(summary string, cont bool, workspace string) (str
 	if summary == "" {
 		return "", fmt.Errorf("%s", MsgHandoffEmpty)
 	}
-	if n := len([]rune(summary)); n > handoffSummaryLimit {
-		return "", fmt.Errorf(MsgHandoffTooLongFmt, n, handoffSummaryLimit)
+	if err := checkSummaryLen(summary); err != nil {
+		return "", err
 	}
 	target := ""
 	if ws := strings.TrimSpace(workspace); ws != "" {
@@ -88,6 +88,14 @@ func (a *Agent) applyHandoff() {
 	if p == nil || a.store == nil {
 		return
 	}
+	h, _ := a.settleHandoff(p)
+	a.lastHandoff = &h
+}
+
+// settleHandoff 把一条待落地的交接真正落地：快照旧会话 → 轮转 → 写新会话。
+// 返回交接事实与是否成立；调用方决定是否存进 lastHandoff（回合出口路径存，
+// 外部强制复位路径直接返回给调用方）。p.workspace 非空时才可能返回 false。
+func (a *Agent) settleHandoff(p *pendingHandoff) (Handoff, bool) {
 	oldStore, oldHistory := a.store, a.history
 	h := Handoff{
 		Summary:      p.summary,
@@ -115,9 +123,8 @@ func (a *Agent) applyHandoff() {
 	if wsErr != nil {
 		h.Failed = true
 		h.Err = briefErr(wsErr)
-		a.lastHandoff = &h
 		_ = a.AppendNotice(fmt.Sprintf(MsgHandoffFailNoticeFmt, h.Err, shortPath(a.workspace)))
-		return
+		return h, false
 	}
 	h.Workspace = a.workspace
 	moved := h.Workspace != h.OldWorkspace
@@ -138,8 +145,16 @@ func (a *Agent) applyHandoff() {
 	a.prompt.reset()
 	a.stats.reset()
 	_ = a.save()
-	a.lastHandoff = &h
 	a.fireSession(SessionHandoff, &h)
+	return h, true
+}
+
+// checkSummaryLen 只查摘要长度上限（归一与空值判定由各入口自行负责）。
+func checkSummaryLen(s string) error {
+	if n := len([]rune(s)); n > handoffSummaryLimit {
+		return fmt.Errorf(MsgHandoffTooLongFmt, n, handoffSummaryLimit)
+	}
+	return nil
 }
 
 func normalizeHandoffSummary(s string) string {

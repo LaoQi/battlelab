@@ -1,3 +1,43 @@
+## 2026-11-26 feat(agent): 外部强制复位 `ForceHandoff`——一次调用完成摘要、旧会话落地与新会话成立
+
+模型自驱动的 `next_session` 只能在回合内请求、由回合出口生效，且依赖模型听话。常驻后台场景需要外部在
+上下文达阈值时**强制**复位整个 Agent 状态，故新增这条独立通路（与 `next_session` 不互相替代）。
+
+- `agent/forcehandoff.go`（新）：`ForceHandoffOptions{Instruction, Continue}` 与
+  `Agent.ForceHandoff(ctx, opt) (Handoff, error)`。**调用方提供摘要指令，库零默认文案**；回合外同步执行，
+  一次调用内完成「取摘要 → 旧会话落地 → 轮转新会话」
+- 三个核心指标：①旧数据安稳落地（旧会话 append-only，只多一条移交事实行）②摘要数据正常
+  （请求失败/为空/超 `handoffSummaryLimit` → 整次不成立）③新会话状态正常（id 轮转、history 只含摘要、
+  `prompt`/`stats` 复位、新文件与 system 快照齐备、`SessionEvent(SessionHandoff)` 上报）
+- **摘要请求是一次性的**：system 快照 + 全量 history（不作预算截断）+ 指令 user；工具轮整段省略并留占位
+  `[已省略工具调用：run_shell ×2]`、无主 `tool` 消息省略、`Images` 换成 `[图片 N 张]`、思维链清空；
+  **不带工具定义**、无 sink。不写 history、不落盘、不计 `Stats`、不触发请求切点钩子
+- **`Client` 与请求形态解耦（BREAKING）**：`Client` 只留链路（端点/鉴权/协议/SSE/重试），不再持有工具集；
+  新增 `LLMRequest{Messages, Tools}` 描述一次请求的完整形态（零值 `Tools` 即本次不带工具——请求自身的形状，
+  不是开关参数），入口改为 `Client.Request(ctx, LLMRequest, sink)`；`NewClient(cfg, tools)` → `NewClient(cfg)`、
+  `ChatStream(ctx, msgs, sink)` → `Request(...)`。内部 `request` 改名 `exchange`（单次发送，重试在 `Request`）。
+  库外无消费者（tanya/ivan 都只用 `Agent`）
+- 回合请求与复位请求因此都是**显式构造的一份新请求**：`LLMRequest{Messages: a.buildMessages(), Tools: a.tools.defs()}`
+  与 `LLMRequest{Messages: msgs}`
+- 落地去重：`applyHandoff` 拆出 `settleHandoff(p *pendingHandoff) (Handoff, bool)`——回合出口路径与
+  外部强制路径共用同一段落地代码；外部路径**直接返回事实**、不写 `lastHandoff`（避免表现层消费两遍），
+  `TakeHandoff` 仍只服务模型自驱动路径
+- 新护栏：`Agent.turning`（`Ask`/`Continue` 置位，`defer` 清除）——回合进行中调用 `ForceHandoff` 直接报错；
+  归档只读会话返回 `ErrArchiveReadOnly`；无历史/空指令不发请求
+- 校验去重：新增 `checkSummaryLen`，`RequestHandoff` 与摘要请求共用长度上限判定
+
+**行为变化**：`Ask`/`Continue` 仅多一个内部标志位的置位与清除，外部可观察行为不变。
+
+**测试**（`agent/forcehandoff_test.go` 9 例）：复位后 state 三指标（含旧会话只多一行、新会话 history/统计/
+事件）、摘要请求形态（不带 tools、system 首条、工具轮占位、图片占位、指令末条、思维链清空）、指令必填、
+空历史、空摘要失败后状态与文件零变化、长度上限边界、回合内被拒绝（钩子内调用）与回合外可用、归档只读拒绝、
+`NoSave` 路径。**验证**：`gofmt -l` 干净、`go build`/`vet`/`test ./...` 全绿、`go test -race ./agent/` 通过、
+`make cross`（darwin + windows vet 与逐包测试编译）通过。
+
+**文档**：`docs/force-handoff.md`（新：定位与三指标、接口、实现顺序、请求形态、失败面、与既有面的关系、不做）、
+`docs/session-handoff.md`（§14 互指两条路）、`docs/agent-hooks.md`（典型用法表区分回合内转段与回合外复位）、
+`AGENTS.md`（交接两条路的约束条 + 文档清单）。
+
 ## 2026-11-26 feat(agent): 生命周期钩子 `WithHooks`
 
 调用方在回合内的执行权此前只有一条通路（模型触发的 `Tool`），缺「调用方在固定时机做自己的事」的面子。

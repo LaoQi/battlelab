@@ -26,7 +26,7 @@ func TestListModels(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.BaseURL = srv.URL
 	cfg.APIKey = "test-key"
-	ids, err := NewClient(cfg, nil).ListModels()
+	ids, err := NewClient(cfg).ListModels()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +43,13 @@ func TestListModelsAPIError(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.BaseURL = srv.URL
 	cfg.APIKey = "test-key"
-	_, err := NewClient(cfg, nil).ListModels()
+	_, err := NewClient(cfg).ListModels()
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Errorf("应返回错误: %v", err)
 	}
 }
 
-func TestChatStreamReasoningEffort(t *testing.T) {
+func TestRequestReasoningEffort(t *testing.T) {
 	var raw []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ = io.ReadAll(r.Body)
@@ -63,7 +63,7 @@ func TestChatStreamReasoningEffort(t *testing.T) {
 	cfg.APIKey = "test-key"
 	cfg.ApiProtocol = "chat"
 	cfg.ReasoningEffort = "max"
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), `"reasoning_effort":"max"`) {
@@ -72,7 +72,7 @@ func TestChatStreamReasoningEffort(t *testing.T) {
 
 	raw = nil
 	cfg.ReasoningEffort = ""
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "reasoning_effort") {
@@ -103,7 +103,7 @@ func TestChatReplaysReasoningContent(t *testing.T) {
 		{Role: "assistant", Content: "ok", ReasoningItems: []ReasoningItem{{ID: "rs_1", Content: "想了一下"}}},
 		{Role: "user", Content: "next"},
 	}
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: history}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "reasoning_items") {
@@ -126,7 +126,7 @@ func TestChatOmitsAbsentReasoning(t *testing.T) {
 		{Role: "assistant", Content: "ok"},
 		{Role: "user", Content: "next"},
 	}
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), history, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: history}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "reasoning_content") {
@@ -142,7 +142,7 @@ func TestChatEffortOmitsTemperature(t *testing.T) {
 	cfg.APIKey = "test-key"
 	cfg.ApiProtocol = "chat"
 	cfg.ReasoningEffort = "high"
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), `"temperature"`) {
@@ -151,7 +151,7 @@ func TestChatEffortOmitsTemperature(t *testing.T) {
 
 	raw = nil
 	cfg.ReasoningEffort = ""
-	if _, err := NewClient(cfg, nil).ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+	if _, err := NewClient(cfg).Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), `"temperature"`) {
@@ -159,17 +159,15 @@ func TestChatEffortOmitsTemperature(t *testing.T) {
 	}
 }
 
-func TestChatStreamContent(t *testing.T) {
+func TestRequestContent(t *testing.T) {
 	m := newMockLLM(t, mockStep{content: "你好，世界"})
-	c := NewClient(m.config(), nil)
+	c := NewClient(m.config())
 	var sb strings.Builder
-	msg, err := c.ChatStream(context.Background(),
-		[]Message{{Role: "user", Content: "hi"}},
-		EventSink(func(e Event) {
-			if e.Kind == EventContent {
-				sb.WriteString(e.Text)
-			}
-		}))
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, EventSink(func(e Event) {
+		if e.Kind == EventContent {
+			sb.WriteString(e.Text)
+		}
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,13 +182,13 @@ func TestChatStreamContent(t *testing.T) {
 	}
 }
 
-func TestChatStreamToolCallsMerge(t *testing.T) {
+func TestRequestToolCallsMerge(t *testing.T) {
 	m := newMockLLM(t, mockStep{toolCalls: []mockToolCall{
 		{id: "call_1", name: "run_shell", args: `{"command":"echo hi","timeout":30}`},
 		{id: "call_2", name: "calc", args: `{"expression":"1+2"}`},
 	}})
-	c := NewClient(m.config(), nil)
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,29 +207,29 @@ func TestChatStreamToolCallsMerge(t *testing.T) {
 	}
 }
 
-func TestChatStreamHTTPError(t *testing.T) {
+func TestRequestHTTPError(t *testing.T) {
 	m := newMockLLM(t, mockStep{status: 500})
-	c := NewClient(m.config(), nil)
-	_, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	_, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		t.Errorf("应返回 500 错误: %v", err)
 	}
 }
 
-func TestChatStreamNoAPIKey(t *testing.T) {
+func TestRequestNoAPIKey(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.APIKey = ""
-	c := NewClient(cfg, nil)
-	_, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(cfg)
+	_, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "api_key") {
 		t.Errorf("应提示缺少 api_key: %v", err)
 	}
 }
 
-func TestChatStreamUsage(t *testing.T) {
+func TestRequestUsage(t *testing.T) {
 	m := newMockLLM(t, mockStep{content: "ok", usage: &Usage{PromptTokens: 120, CompletionTokens: 5, TotalTokens: 125}})
-	c := NewClient(m.config(), nil)
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,10 +244,10 @@ func TestChatStreamUsage(t *testing.T) {
 	}
 }
 
-func TestChatStreamNoUsage(t *testing.T) {
+func TestRequestNoUsage(t *testing.T) {
 	m := newMockLLM(t, mockStep{content: "ok"})
-	c := NewClient(m.config(), nil)
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,13 +256,13 @@ func TestChatStreamNoUsage(t *testing.T) {
 	}
 }
 
-func TestChatStreamRequestFormat(t *testing.T) {
+func TestRequestRequestFormat(t *testing.T) {
 	m := newMockLLM(t, mockStep{content: "ok"})
-	c := NewClient(m.config(), testToolDefs())
-	_, err := c.ChatStream(context.Background(), []Message{
+	c := NewClient(m.config())
+	_, err := c.Request(context.Background(), LLMRequest{Messages: []Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},
-	}, nil)
+	}, Tools: testToolDefs()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,9 +281,9 @@ func TestChatStreamRequestFormat(t *testing.T) {
 	}
 }
 
-func TestChatStreamReasoningEvents(t *testing.T) {
+func TestRequestReasoningEvents(t *testing.T) {
 	m := newMockLLM(t, mockStep{reasoning: "先想一想", content: "答案是 42"})
-	c := NewClient(m.config(), nil)
+	c := NewClient(m.config())
 	var kinds []EventKind
 	var reasoning, content strings.Builder
 	sink := EventSink(func(e Event) {
@@ -297,7 +295,7 @@ func TestChatStreamReasoningEvents(t *testing.T) {
 			content.WriteString(e.Text)
 		}
 	})
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, sink)
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,10 +316,10 @@ func TestChatStreamReasoningEvents(t *testing.T) {
 	}
 }
 
-func TestChatStreamRecordsDuration(t *testing.T) {
+func TestRequestRecordsDuration(t *testing.T) {
 	m := newMockLLM(t, mockStep{reasoning: "想", content: "答"})
-	c := NewClient(m.config(), nil)
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,15 +328,15 @@ func TestChatStreamRecordsDuration(t *testing.T) {
 	}
 }
 
-func TestChatStreamReasoningTokens(t *testing.T) {
+func TestRequestReasoningTokens(t *testing.T) {
 	m := newMockLLM(t, mockStep{content: "ok", usage: &Usage{
 		PromptTokens:            120,
 		CompletionTokens:        50,
 		TotalTokens:             170,
 		CompletionTokensDetails: &completionTokensDetails{ReasoningTokens: 42},
 	}})
-	c := NewClient(m.config(), nil)
-	msg, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
+	c := NewClient(m.config())
+	msg, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +364,7 @@ func kindCount(kinds []EventKind, k EventKind) int {
 	return n
 }
 
-func TestChatStreamReasoningEndEvents(t *testing.T) {
+func TestRequestReasoningEndEvents(t *testing.T) {
 	cases := []struct {
 		name string
 		step mockStep
@@ -378,9 +376,9 @@ func TestChatStreamReasoningEndEvents(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newMockLLM(t, tc.step)
-			c := NewClient(m.config(), nil)
+			c := NewClient(m.config())
 			var kinds []EventKind
-			if _, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, EventSink(func(e Event) {
+			if _, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, EventSink(func(e Event) {
 				kinds = append(kinds, e.Kind)
 			})); err != nil {
 				t.Fatal(err)
@@ -401,9 +399,9 @@ func TestChatStreamReasoningEndEvents(t *testing.T) {
 	}
 	t.Run("无思维链不发", func(t *testing.T) {
 		m := newMockLLM(t, mockStep{content: "答"})
-		c := NewClient(m.config(), nil)
+		c := NewClient(m.config())
 		var kinds []EventKind
-		if _, err := c.ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, EventSink(func(e Event) {
+		if _, err := c.Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, EventSink(func(e Event) {
 			kinds = append(kinds, e.Kind)
 		})); err != nil {
 			t.Fatal(err)

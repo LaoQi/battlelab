@@ -26,6 +26,7 @@ type Agent struct {
 	stats        usageStats
 	handoffPend  *pendingHandoff
 	lastHandoff  *Handoff
+	turning      bool
 	attachOps    AttachOps
 	hooks        *hookSet
 }
@@ -115,7 +116,7 @@ func (a *Agent) loadWorkspace(dir string, noSave bool) error {
 	a.prompt = newPromptBuilder(a.basePrompt, dir, a.globalAgents, a.home, readAgentsFile)
 	a.store = newSessionStore(sessionDir, archiveDir, dir, noSave)
 	a.tools = newToolRegistry(assembleTools(a.registered, a, a)...)
-	a.client = NewClient(a.cfg, a.tools.defs())
+	a.client = NewClient(a.cfg)
 	a.newSession()
 	a.store.refresh()
 	return nil
@@ -350,6 +351,8 @@ func (a *Agent) Ask(ctx context.Context, input string, sink EventSink) error {
 	if _, ok := a.ArchiveReadOnly(); ok {
 		return ErrArchiveReadOnly
 	}
+	a.turning = true
+	defer func() { a.turning = false }()
 	start := time.Now()
 	base := len(a.history)
 	a.history = append(a.history, Message{Role: "user", Content: input, TS: nowMS()})
@@ -364,6 +367,8 @@ func (a *Agent) Continue(ctx context.Context, sink EventSink) error {
 	if _, ok := a.ArchiveReadOnly(); ok {
 		return ErrArchiveReadOnly
 	}
+	a.turning = true
+	defer func() { a.turning = false }()
 	start := time.Now()
 	base := len(a.history)
 	a.hooks.fireBeforeTurn(ctx, a.turnStart(true, ""))
@@ -421,7 +426,7 @@ func (a *Agent) runTurn(ctx context.Context, sink EventSink) error {
 		sink.Emit(Event{Kind: EventRequestStart})
 		a.hooks.fireBeforeRequest(ctx, a.requestInfo(turn))
 		start := time.Now()
-		resp, err := a.client.ChatStream(ctx, a.buildMessages(), sink)
+		resp, err := a.client.Request(ctx, LLMRequest{Messages: a.buildMessages(), Tools: a.tools.defs()}, sink)
 		info := ResponseInfo{Duration: time.Since(start)}
 		if err == nil {
 			if resp.Duration > 0 {

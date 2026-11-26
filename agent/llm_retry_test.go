@@ -73,7 +73,7 @@ func (r *retryRecorder) contents() []string {
 	return append([]string(nil), r.text...)
 }
 
-func TestChatStreamRetriesServerError(t *testing.T) {
+func TestRequestRetriesServerError(t *testing.T) {
 	fastRetry(t)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,8 +86,8 @@ func TestChatStreamRetriesServerError(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	msg, err := NewClient(retryConfig(srv.URL, "chat", 2), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	msg, err := NewClient(retryConfig(srv.URL, "chat", 2)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if err != nil {
 		t.Fatalf("重试后应成功: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestChatStreamRetriesServerError(t *testing.T) {
 	}
 }
 
-func TestChatStreamRetryExhausted(t *testing.T) {
+func TestRequestRetryExhausted(t *testing.T) {
 	fastRetry(t)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,8 +127,8 @@ func TestChatStreamRetryExhausted(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	_, err := NewClient(retryConfig(srv.URL, "chat", 2), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	_, err := NewClient(retryConfig(srv.URL, "chat", 2)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("用尽重试应返回最后一次错误: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestChatStreamRetryExhausted(t *testing.T) {
 	}
 }
 
-func TestChatStreamRetryDisabled(t *testing.T) {
+func TestRequestRetryDisabled(t *testing.T) {
 	fastRetry(t)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,8 +150,8 @@ func TestChatStreamRetryDisabled(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	if _, err := NewClient(retryConfig(srv.URL, "chat", 0), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink); err == nil {
+	if _, err := NewClient(retryConfig(srv.URL, "chat", 0)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink); err == nil {
 		t.Fatal("max_retries=0 应直接失败")
 	}
 	if calls.Load() != 1 || len(rec.retries()) != 0 {
@@ -159,7 +159,7 @@ func TestChatStreamRetryDisabled(t *testing.T) {
 	}
 }
 
-func TestChatStreamNoRetryOnClientError(t *testing.T) {
+func TestRequestNoRetryOnClientError(t *testing.T) {
 	fastRetry(t)
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -169,8 +169,8 @@ func TestChatStreamNoRetryOnClientError(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	if _, err := NewClient(retryConfig(srv.URL, "chat", 5), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink); err == nil {
+	if _, err := NewClient(retryConfig(srv.URL, "chat", 5)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink); err == nil {
 		t.Fatal("400 应直接失败")
 	}
 	if calls.Load() != 1 || len(rec.retries()) != 0 {
@@ -178,7 +178,7 @@ func TestChatStreamNoRetryOnClientError(t *testing.T) {
 	}
 }
 
-func TestChatStreamNoRetryAfterContent(t *testing.T) {
+func TestRequestNoRetryAfterContent(t *testing.T) {
 	fastRetry(t)
 	old := streamIdleTimeout
 	streamIdleTimeout = 50 * time.Millisecond
@@ -196,8 +196,8 @@ func TestChatStreamNoRetryAfterContent(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	_, err := NewClient(retryConfig(srv.URL, "chat", 5), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	_, err := NewClient(retryConfig(srv.URL, "chat", 5)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if err == nil || !strings.Contains(err.Error(), "空闲超时") {
 		t.Fatalf("应报空闲超时: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestChatStreamNoRetryAfterContent(t *testing.T) {
 	}
 }
 
-func TestChatStreamRetryAfterHeader(t *testing.T) {
+func TestRequestRetryAfterHeader(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -221,8 +221,8 @@ func TestChatStreamRetryAfterHeader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rec := &retryRecorder{onRtry: func(RetryInfo) { cancel() }}
-	_, err := NewClient(retryConfig(srv.URL, "chat", 5), nil).
-		ChatStream(ctx, []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	_, err := NewClient(retryConfig(srv.URL, "chat", 5)).
+		Request(ctx, LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("等待期取消应返回 context.Canceled: %v", err)
 	}
@@ -251,8 +251,8 @@ func TestResponsesStreamRetriesServerError(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	msg, err := NewClient(retryConfig(srv.URL, "responses", 1), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	msg, err := NewClient(retryConfig(srv.URL, "responses", 1)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if err != nil {
 		t.Fatalf("重试后应成功: %v", err)
 	}
@@ -272,8 +272,8 @@ func TestResponsesStreamNoRetryOnSemanticError(t *testing.T) {
 	defer srv.Close()
 
 	rec := &retryRecorder{}
-	_, err := NewClient(retryConfig(srv.URL, "responses", 5), nil).
-		ChatStream(context.Background(), []Message{{Role: "user", Content: "hi"}}, rec.sink)
+	_, err := NewClient(retryConfig(srv.URL, "responses", 5)).
+		Request(context.Background(), LLMRequest{Messages: []Message{{Role: "user", Content: "hi"}}}, rec.sink)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("语义失败应原样上抛: %v", err)
 	}

@@ -97,14 +97,23 @@ type ToolDef struct {
 	} `json:"function"`
 }
 
-type Client struct {
-	cfg   *Config
-	http  *http.Client
-	tools []ToolDef
+// LLMRequest 是一次请求的完整形态：除链路配置（BaseURL/APIKey/模型/协议/重试）
+// 外，一次请求需要什么都在这里。零值 Tools 即「本次不带工具」——不带工具是请求
+// 自身的形状，不是开关参数，调用方按需构造一份全新的请求即可。
+type LLMRequest struct {
+	Messages []Message
+	Tools    []ToolDef
 }
 
-func NewClient(cfg *Config, tools []ToolDef) *Client {
-	return &Client{cfg: cfg, http: &http.Client{}, tools: tools}
+// Client 是 LLM 链路：端点、鉴权、协议选择、SSE 解析与重试。
+// 它不持有任何请求形态（不含工具集），每个请求由调用方显式给出。
+type Client struct {
+	cfg  *Config
+	http *http.Client
+}
+
+func NewClient(cfg *Config) *Client {
+	return &Client{cfg: cfg, http: &http.Client{}}
 }
 
 type chatRequest struct {
@@ -173,7 +182,8 @@ func (c *Client) ListModels() ([]string, error) {
 	return ids, nil
 }
 
-func (c *Client) ChatStream(ctx context.Context, messages []Message, sink EventSink) (*Message, error) {
+// Request 发一次请求（流式），失败按配置重试；已向上屏输出过内容的请求不重试。
+func (c *Client) Request(ctx context.Context, req LLMRequest, sink EventSink) (*Message, error) {
 	if c.cfg.APIKey == "" {
 		return nil, fmt.Errorf(MsgAPIKey)
 	}
@@ -183,7 +193,7 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, sink EventS
 	}
 	track := &retrySink{sink: sink}
 	for attempt := 1; ; attempt++ {
-		msg, err := c.request(ctx, messages, track.Emit)
+		msg, err := c.exchange(ctx, req, track.Emit)
 		if err == nil {
 			return msg, nil
 		}
@@ -207,11 +217,12 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, sink EventS
 	}
 }
 
-func (c *Client) request(ctx context.Context, messages []Message, sink EventSink) (*Message, error) {
+// exchange 按协议把一份请求发出去（单次，不含重试）。
+func (c *Client) exchange(ctx context.Context, req LLMRequest, sink EventSink) (*Message, error) {
 	if c.cfg.ApiProtocol == "chat" {
-		return c.chatStream(ctx, messages, sink)
+		return c.chatStream(ctx, req, sink)
 	}
-	return c.responsesStream(ctx, messages, sink)
+	return c.responsesStream(ctx, req, sink)
 }
 
 // retrySink 记录本次请求是否已向上屏输出过内容：一旦有输出就无法回滚，后续失败不再重试。
@@ -299,8 +310,8 @@ func joinReasoning(items []ReasoningItem) string {
 	return b.String()
 }
 
-func (c *Client) chatStream(ctx context.Context, messages []Message, sink EventSink) (*Message, error) {
-	wire := chatWireMessages(messages, c.cfg.ImageDetail)
+func (c *Client) chatStream(ctx context.Context, req LLMRequest, sink EventSink) (*Message, error) {
+	wire := chatWireMessages(req.Messages, c.cfg.ImageDetail)
 	msg := &Message{Role: "assistant"}
 	var usage *Usage
 	var reasoning strings.Builder
@@ -323,7 +334,7 @@ func (c *Client) chatStream(ctx context.Context, messages []Message, sink EventS
 		Messages:        wire,
 		Temperature:     temperatureParam(c.cfg),
 		ReasoningEffort: c.cfg.ReasoningEffort,
-		Tools:           c.tools,
+		Tools:           req.Tools,
 		Stream:          true,
 		StreamOptions:   &streamOptions{IncludeUsage: true},
 	}, func(data string) error {

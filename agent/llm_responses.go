@@ -201,8 +201,8 @@ type responsesError struct {
 	Message string `json:"message"`
 }
 
-func (c *Client) responsesStream(ctx context.Context, messages []Message, sink EventSink) (*Message, error) {
-	instructions, input := buildResponsesInput(messages, c.cfg.ImageDetail)
+func (c *Client) responsesStream(ctx context.Context, req LLMRequest, sink EventSink) (*Message, error) {
+	instructions, input := buildResponsesInput(req.Messages, c.cfg.ImageDetail)
 	msg := &Message{Role: "assistant"}
 	var usage *Usage
 	var hasDelta bool
@@ -227,7 +227,7 @@ func (c *Client) responsesStream(ctx context.Context, messages []Message, sink E
 		Input:        input,
 		Temperature:  temperatureParam(c.cfg),
 		Reasoning:    reasoningParam(c.cfg.ReasoningEffort),
-		Tools:        responsesTools(c.tools),
+		Tools:        responsesTools(req.Tools),
 		Stream:       true,
 	}, func(data string) error {
 		var ev responsesEvent

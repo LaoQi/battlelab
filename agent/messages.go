@@ -70,6 +70,13 @@ const (
 	MsgHandoffIntroFmt        = "[会话交接] 上一个会话（%s）移交的进度摘要：\n%s"
 	MsgHandoffIntroWsFmt      = "[会话交接] 上一个会话（%s）移交的进度摘要（工作区已切换: %s → %s）：\n%s"
 	MsgHandoffFailNoticeFmt   = "[会话交接未成立：%s；本会话继续，工作区仍为 %s]"
+
+	MsgForceHandoffInTurn       = "回合进行中不能强制复位状态（请在回合结束后调用）"
+	MsgForceHandoffNoInstr      = "强制复位需要调用方提供摘要指令"
+	MsgForceHandoffEmptySession = "当前会话没有历史，无法生成摘要"
+	MsgForceHandoffEmptySummary = "摘要请求未返回正文，本次强制复位未成立"
+	MsgSummaryToolRoundFmt      = "[已省略工具调用：%s]"
+	MsgSummaryHasImageFmt       = "[图片 %d 张]"
 )
 
 const (

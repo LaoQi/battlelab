@@ -69,7 +69,7 @@ func TestScanSSE(t *testing.T) {
 
 func TestStreamSSEErrors(t *testing.T) {
 	t.Run("marshal failure", func(t *testing.T) {
-		c := NewClient(defaultConfig(), nil)
+		c := NewClient(defaultConfig())
 		payload := struct {
 			Bad json.RawMessage `json:"bad"`
 		}{Bad: json.RawMessage(`{invalid`)}
@@ -81,7 +81,7 @@ func TestStreamSSEErrors(t *testing.T) {
 	t.Run("request construction failure", func(t *testing.T) {
 		cfg := defaultConfig()
 		cfg.BaseURL = "://bad"
-		c := NewClient(cfg, nil)
+		c := NewClient(cfg)
 		if err := c.streamSSE(context.Background(), "/x", chatRequest{}, func(string) error { return nil }); err == nil {
 			t.Fatal("非法 BaseURL 应返回构造错误")
 		}
@@ -104,7 +104,7 @@ func TestStreamSSEIdleTimeout(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewClient(&Config{BaseURL: srv.URL, APIKey: "k"}, nil)
+	c := NewClient(&Config{BaseURL: srv.URL, APIKey: "k"})
 	var got []string
 	err := c.streamSSE(context.Background(), "/chat/completions", map[string]any{}, func(s string) error {
 		got = append(got, s)
@@ -139,7 +139,7 @@ func TestStreamSSEIdleReset(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := NewClient(&Config{BaseURL: srv.URL, APIKey: "k"}, nil)
+	c := NewClient(&Config{BaseURL: srv.URL, APIKey: "k"})
 	var got []string
 	err := c.streamSSE(context.Background(), "/chat/completions", map[string]any{}, func(s string) error {
 		got = append(got, s)

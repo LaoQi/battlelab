@@ -79,7 +79,8 @@ type SaveInfo struct    { Session string; Messages int; Err error }
 | 需求 | 做法 |
 |---|---|
 | 上下文达阈值提醒 | `BeforeRequest` 里判 `Stats().Est` 与 `Stats().ContextTokens`，够阈则 `AppendNotice(...)` |
-| 外部触发转段 | `BeforeRequest` 里 `RequestHandoff(summary, cont, ws)`（方法自带校验与 pending 语义，回合出口生效） |
+| 回合内触发转段（模型或调用方） | `BeforeRequest` 里 `RequestHandoff(summary, cont, ws)`（方法自带校验与 pending 语义，回合出口生效） |
+| 回合外强制复位 | 不用钩子：回合之间调 `ForceHandoff`（见 `force-handoff.md`，库用 `turning` 拒绝回合内调用） |
 | 回合耗时/用量记账 | `AfterTurn` 里读 `TurnInfo` 与 `Stats()` |
 | 落盘审计 | `AfterSave` 里读 `SaveInfo` |
 | 危险命令观测 | `BeforeTool` 里读 `ToolCall`（要拦就得自己包 `Tool`，不是钩子） |

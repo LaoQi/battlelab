@@ -27,7 +27,7 @@
 | `agent/llm_responses.go` | 5 | 同上 |
 | `agent/agent.go`（`runTurn`） | 4 | `EventRequestStart` `EventResponse` `EventToolStart` `EventToolEnd` |
 
-> `sink` 穿透到 LLM 层（`Client.ChatStream(ctx, messages, sink)`）是**正确的**：delta 在那里产生，中转一层只会更糟。代价是 LLM 层认识 `Event` 类型，而 `Event` 本就是 agent 的内部协议。
+> `sink` 穿透到 LLM 层（`Client.Request(ctx, LLMRequest, sink)`）是**正确的**：delta 在那里产生，中转一层只会更糟。代价是 LLM 层认识 `Event` 类型，而 `Event` 本就是 agent 的内部协议。
 
 ### 2.2 消费点矩阵：已经有两个 Kind 无人消费
 

@@ -269,3 +269,7 @@ func (a *Agent) RequestHandoff(summary string, cont bool, workspace string) (str
 ### 13.6 不做
 
 按用户口径：`/next` 命令的工作区参数（跨项目时说清目标、由模型传参）、`/switch` 的「带摘要切换」、tanya 的 `system_prompt.md` 的能力提示、任何新配置键；也不做切换的等待/重试（失败即作废，由用户或模型重新发起）。
+
+## 14 外部强制复位（2026-11-26，另一条路）
+
+模型自驱动的交接之外，另有**外部**入口 `Agent.ForceHandoff`（见 `force-handoff.md`）：回合外由调用方发起，一次调用内完成「按调用方指令取摘要 → 旧会话落地 → 轮转新会话」，落地代码与本文件的 `applyHandoff` 共用 `settleHandoff`。两条路的差异：本文件的不变量 3、4（pending + 仅正常回合出口应用）只约束模型自驱动路径；`ForceHandoff` 在回合之外执行，失败即整次不成立、状态与文件零变化。`TakeHandoff` 通道只服务模型自驱动路径，`ForceHandoff` 直接把事实返回给调用方。
