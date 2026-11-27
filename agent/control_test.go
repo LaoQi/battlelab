@@ -89,11 +89,8 @@ func hasString(list []string, want string) bool {
 
 func TestAgentToolDescGolden(t *testing.T) {
 	want := "读取或修改当前 agent 的模型与思考等级，并查询运行态统计、可用模型与会话列表。" +
-		"改动仅本次会话有效（不写入配置文件，进程退出即恢复），对下一次请求生效。" +
-		"切换模型后 prompt cache 不复用，需重新预热。" +
-		"action=get 按 key 读取；action=set 按 key 写入可写 key（需同时给 value）；" +
-		"action=prune 只适用于 key=attach（清理当前工作区 attach 运行目录里的陈旧残渣，只删探测无响应的项）。" +
-		"key 可用: model、reasoning_effort、models、usage、stat、sessions、config_path、attach；可写 key: model、reasoning_effort。"
+		"改动仅本次会话有效（不写入配置文件，进程退出即恢复），对下一次请求生效；" +
+		"切换模型后 prompt cache 不复用，需重新预热。"
 	tool := newAgentTool(&stubConfigTarget{})
 	if got := tool.Definition().Function.Description; got != want {
 		t.Errorf("描述全串不匹配:\n got %q\nwant %q", got, want)

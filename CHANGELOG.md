@@ -1,3 +1,23 @@
+## 2026-11-27 refactor(tools): 三处工具描述去掉实现细节与自相重复
+
+原则：**描述只写模型做决策需要的因果，不写宿主实现，也不在同一份定义里说两遍**（描述与 `params` 各一遍时，
+模型两处都读，冲突时还得以描述为准）。
+
+- `run_shell` 的 `interactive` 参数：删掉「（Linux 独立 pty、Windows 继承控制台），停用等待动画，默认超时放宽」
+  ——前两项是宿主实现，第三项是表现层行为，第四项与 `timeout` 参数描述（`默认 60（interactive 时 300）`）重复。
+  改为「命令需要用户在终端应答（sudo/ssh/gpg/read 等交互提示）时置 true，否则命令拿不到终端、无法应答」：
+  只留因果与后果
+- `next_session`：描述里 `continue`/`workspace` 的语义与 `params` 重复，「上下文接近上限、或某一阶段目标已完成
+  需要转段时使用」则是调用时机建议——那是 system 提示词的职责（tanya 的 `system_prompt.md` 已有同句）。
+  描述只留 `params` 表达不了的副作用：摘要进新会话、本回合正常结束时生效、旧会话不再追加
+- `agent_custom`：`action` 三个分支与 `key` 的可写/只读清单在描述与 `params` 各写一遍，描述只留两条行为约束
+  （改动仅本次会话有效、切模型后 prompt cache 不复用），语义交给 `params`
+- 测试同步：`TestRunShellParamsGolden`、`TestAgentToolDescGolden` 的整串期望更新；
+  `TestNextToolDefinitionHasWorkspace` 删掉「描述应含 workspace」一条（`params` 含 workspace 已由同测试前半句断言）
+- 验证：`gofmt -l` 干净；battlelab 7 包、tanya 16 包、ivan 全仓 `go test ./...` 全绿
+- **生效范围**：本仓未发版，改动只在 `go.work` 联调下生效；tanya/ivan 的 `go.mod` 仍指已发布版本，
+  要带到前台需发新 tag 并升 `go.mod`
+
 ## 2026-11-26 feat(agent): 钩子 ctx 携带 `Agent`（`agent.FromContext`）
 
 钩子要在自己的时机做事（注入提醒、请求转段、记账），过去只能靠外面闭包捕获 `*Agent`——装配顺序被迫

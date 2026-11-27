@@ -458,9 +458,6 @@ func TestNextToolDefinitionHasWorkspace(t *testing.T) {
 	if !strings.Contains(string(def.Function.Parameters), `"workspace"`) {
 		t.Errorf("参数表应含 workspace: %s", def.Function.Parameters)
 	}
-	if !strings.Contains(def.Function.Description, "workspace") {
-		t.Errorf("描述应说明 workspace: %s", def.Function.Description)
-	}
 }
 
 func TestHandoffSwitchesWorkspace(t *testing.T) {
